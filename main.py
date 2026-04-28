@@ -865,7 +865,7 @@ with tab2:
             color_discrete_map=CAT_COLORS,
             orientation="h",
             category_orders={"Name": sort_order_asc, "Category": active_cats},
-            title="Hours by Individual — Stacked by Category",
+            title="",
             height=max(420, len(fdf) * 44),
             custom_data=["Hours_fmt"],
         )
@@ -874,9 +874,10 @@ with tab2:
         )
         fig_ind.update_layout(
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            margin=dict(t=60, b=10, l=0, r=0),
+            margin=dict(t=40, b=10, l=0, r=0),
             xaxis_title="Hours (decimal)",
         )
+        st.markdown("**Hours by Individual — Stacked by Category**")
         st.plotly_chart(fig_ind, width='stretch')
 
         st.divider()
