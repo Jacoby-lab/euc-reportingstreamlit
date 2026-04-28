@@ -18,7 +18,7 @@ st.markdown("""
         background: #0d1117;
         border: 1px solid #21262d;
         border-radius: 10px;
-        padding: 14px 18px;T
+        padding: 14px 18px;
     }
     .stTabs [data-baseweb="tab"] { font-weight: 500; }
     .member-card {
@@ -125,14 +125,16 @@ LABEL_TO_CAT = {
 # ── Jira data fetch ───────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
-    """Pull all EUC + TC worklogs for the given date range from Jira."""
+    """Pull EUC, TechConnect, and Identity worklogs for the given date range from Jira."""
     try:
         base_url = st.secrets["jira"]["base_url"].rstrip("/")
         email    = st.secrets["jira"]["email"]
         token    = st.secrets["jira"]["api_token"]
-        # Optional: comma-separated project keys, e.g. "EUC,TC"
+        # Comma-separated Jira project keys.
+        # TC covers "End User Computing" and "End User Computing Mexico" in TechConnect.
+        # ID covers the Identity project space.
         projects = [p.strip() for p in
-                    st.secrets["jira"].get("projects", "EUC").split(",")]
+                    st.secrets["jira"].get("projects", "EUC,TC,ID").split(",")]
     except KeyError as e:
         st.error(f"Missing Jira secret: {e}. Check Settings → Secrets.")
         return pd.DataFrame()
@@ -182,12 +184,18 @@ def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
         fields      = issue["fields"]
         raw_labels  = [l.lower() for l in fields.get("labels", [])]
         project_key = fields.get("project", {}).get("key", "")
-        source      = "EUC (Jira)" if project_key == "EUC" else "TC (TechConnect)"
+        if project_key == "EUC":
+            source = "EUC"
+        elif project_key == "ID":
+            source = "Identity"
+        else:
+            source = "TechConnect"  # TC, End User Computing, End User Computing Mexico
 
-        # First matching label wins; unlabeled EUC tickets default to KTLO
+        # First matching label wins; defaults by source if unlabeled
+        _default_cat = {"EUC": "KTLO", "TechConnect": "Svc Req", "Identity": "Initiative"}
         category = next(
             (LABEL_TO_CAT[l] for l in raw_labels if l in LABEL_TO_CAT),
-            "KTLO" if source == "EUC (Jira)" else "Svc Req",
+            _default_cat.get(source, "KTLO"),
         )
 
         wl_data  = fields.get("worklog", {})
@@ -225,7 +233,8 @@ def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
 
 def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
     """Aggregate raw worklog rows into the per-person summary the app uses."""
-    all_cols = ["Name", "Region", "Total", "EUC (Jira)", "TC (TechConnect)"] + CATEGORIES
+    src_cols = ["EUC", "TechConnect", "Identity"]
+    all_cols  = ["Name", "Region", "Total"] + src_cols + CATEGORIES
     if raw.empty:
         return pd.DataFrame(columns=all_cols)
 
@@ -236,7 +245,7 @@ def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
         index=["Name", "Region"], columns="source",
         values="hours", aggfunc="sum", fill_value=0,
     ).reset_index()
-    for col in ["EUC (Jira)", "TC (TechConnect)"]:
+    for col in src_cols:
         if col not in src_piv.columns:
             src_piv[col] = 0.0
 
@@ -250,7 +259,7 @@ def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
 
     result = (
         totals
-        .merge(src_piv[["Name", "Region", "EUC (Jira)", "TC (TechConnect)"]], on=["Name", "Region"], how="left")
+        .merge(src_piv[["Name", "Region"] + src_cols], on=["Name", "Region"], how="left")
         .merge(cat_piv[["Name", "Region"] + CATEGORIES], on=["Name", "Region"], how="left")
         .fillna(0.0)
     )
@@ -267,7 +276,7 @@ with st.sidebar:
 
     range_type = st.selectbox(
         "📅 Date Range",
-        ["Weekly", "Bi-Weekly", "Monthly", "Quarterly", "Yearly", "Custom"],
+        ["Weekly", "Bi-Weekly", "Year to Date", "Monthly", "Quarterly", "Yearly", "Custom"],
     )
 
     if range_type == "Weekly":
@@ -281,6 +290,11 @@ with st.sidebar:
         date_start = picked - timedelta(days=picked.weekday())
         date_end   = date_start + timedelta(days=13)
         period_code  = f"W{date_start.isocalendar()[1]:02d}–W{date_end.isocalendar()[1]:02d}"
+
+    elif range_type == "Year to Date":
+        date_start  = date(_today.year, 1, 1)
+        date_end    = _today
+        period_code = f"{_today.year}-YTD"
 
     elif range_type == "Monthly":
         c1, c2     = st.columns(2)
@@ -324,7 +338,9 @@ with st.sidebar:
     else:
         period_label = f"{date_start.strftime('%b %-d, %Y')}–{date_end.strftime('%b %-d, %Y')}"
 
-    if range_type == "Monthly":
+    if range_type == "Year to Date":
+        period_label = f"Year to Date {_today.year} (Jan 1 – {_today.strftime('%b %-d')})"
+    elif range_type == "Monthly":
         period_label = date_start.strftime("%B %Y")
     elif range_type == "Quarterly":
         period_label = f"{sel_q} {sel_year}"
@@ -351,11 +367,15 @@ with st.sidebar:
     )
     source_filter = st.radio(
         "Ticket Source",
-        options=["Both", "EUC (Jira)", "TC (TechConnect)"],
-        help="EUC = Jira EUC project · TC = TechConnect helpdesk",
+        options=["All", "EUC", "TechConnect", "Identity"],
+        help=(
+            "EUC → KTLO, Initiative, Tech Debt\n"
+            "TechConnect → Svc Req, Incident\n"
+            "Identity → Initiative, Tech Debt"
+        ),
     )
     st.divider()
-    st.caption("Jira EUC + TechConnect · refreshes hourly")
+    st.caption("Jira EUC · TechConnect · Identity · refreshes hourly")
 
 
 # ── Load data ─────────────────────────────────────────────────────────────
@@ -373,12 +393,18 @@ if search_query.strip():
     mask &= df["Name"].str.contains(search_query.strip(), case=False, na=False)
 fdf = df[mask].copy() if not df.empty else df.copy()
 
-if source_filter == "EUC (Jira)":
-    fdf["_display_total"] = fdf["EUC (Jira)"]
-elif source_filter == "TC (TechConnect)":
-    fdf["_display_total"] = fdf["TC (TechConnect)"]
-else:
+if source_filter == "EUC":
+    fdf["_display_total"] = fdf["EUC"]
+    active_cats = ["KTLO", "Initiative", "Tech Debt"]
+elif source_filter == "TechConnect":
+    fdf["_display_total"] = fdf["TechConnect"]
+    active_cats = ["Svc Req", "Incident"]
+elif source_filter == "Identity":
+    fdf["_display_total"] = fdf["Identity"]
+    active_cats = ["Initiative", "Tech Debt"]
+else:  # All
     fdf["_display_total"] = fdf["Total"]
+    active_cats = CATEGORIES
 
 
 # ── Page header ───────────────────────────────────────────────────────────
@@ -421,7 +447,7 @@ with tab_dash:
     st.markdown(f"""
 <div style="margin-bottom:6px;">
   <span style="font-size:1.5rem;font-weight:800;letter-spacing:-0.5px">EUC Team — Executive Dashboard</span><br>
-  <span style="color:#6b7280;font-size:0.9rem">Week of {week_label} &nbsp;·&nbsp; {week_iso} &nbsp;·&nbsp; Full team · Sidebar filters not applied</span>
+  <span style="color:#6b7280;font-size:0.9rem">{period_label} &nbsp;·&nbsp; {period_code} &nbsp;·&nbsp; Full team · Sidebar filters not applied</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -459,8 +485,8 @@ with tab_dash:
 <div style="background:linear-gradient(135deg,#1c1c2e,#0f172a);border:1px solid #334155;border-radius:12px;padding:20px 22px;text-align:center;">
   <div style="color:#94a3b8;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">⏱ Grand Total</div>
   <div style="font-size:2rem;font-weight:800;color:#f1f5f9">{fh(all_total)}</div>
-  <div style="color:#94a3b8;font-size:0.82rem;margin-top:4px">18 members · 2 regions</div>
-  <div style="color:#64748b;font-size:0.82rem">Week 17 · Apr 20–24</div>
+  <div style="color:#94a3b8;font-size:0.82rem;margin-top:4px">{int((df["Total"] > 0).sum())} active · {len(set(df["Region"].unique()) & set(region_filter))} regions</div>
+  <div style="color:#64748b;font-size:0.82rem">{period_code}</div>
 </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -535,15 +561,15 @@ with tab_dash:
         )
         fig.update_layout(
             xaxis=dict(
-                title="% of week",
+                title="% of period",
                 ticksuffix="%",
                 range=[0, 100],
                 showgrid=True,
                 gridcolor="rgba(255,255,255,0.06)",
             ),
             yaxis=dict(title="", tickfont=dict(size=11)),
-            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0, font=dict(size=11)),
-            margin=dict(t=60, b=20, l=0, r=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="left", x=0, font=dict(size=11)),
+            margin=dict(t=80, b=20, l=0, r=10),
             height=max(340, len(team_df) * 42),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
@@ -554,13 +580,13 @@ with tab_dash:
 
     with col_us:
         st.plotly_chart(
-            make_normalized_bar(us_df, "🇺🇸 US Team — Time by Category"),
+            make_normalized_bar(us_df, "🇺🇸 US Team - Time by Category"),
             use_container_width=True,
         )
 
     with col_mx:
         st.plotly_chart(
-            make_normalized_bar(mx_df, "🇲🇽 MX Team — Time by Category"),
+            make_normalized_bar(mx_df, "🇲🇽 MX Team - Time by Category"),
             use_container_width=True,
         )
 
@@ -614,7 +640,7 @@ with tab_dash:
     _zero_note = " · " + ", ".join(_zero_members) + " logged 0h" if _zero_members else ""
     st.markdown(f"""
 <div style="color:#4b5563;font-size:0.78rem;margin-top:8px;border-top:1px solid #1f2937;padding-top:10px;">
-  Source: Jira EUC + TechConnect · {week_label} · {week_iso} ·
+  Source: Jira EUC + TechConnect · {period_label} · {period_code} ·
   KTLO = Keep The Lights On · TC tickets default to Svc Req or Incident{_zero_note}
 </div>
 """, unsafe_allow_html=True)
@@ -628,7 +654,7 @@ with tab1:
         st.info("No members match the current filters.")
     else:
         total_h = fdf["_display_total"].sum()
-        cat_sums = {c: fdf[c].sum() for c in CATEGORIES}
+        cat_sums = {c: fdf[c].sum() for c in active_cats}
         grand = sum(cat_sums.values()) or 1
 
         # ── KPI row 1 ──
@@ -643,8 +669,8 @@ with tab1:
         st.markdown("")
 
         # ── KPI row 2: per-category ──
-        c1, c2, c3, c4, c5 = st.columns(5)
-        for cat, col in zip(CATEGORIES, [c1, c2, c3, c4, c5]):
+        cat_cols_row = st.columns(len(active_cats))
+        for cat, col in zip(active_cats, cat_cols_row):
             pct = cat_sums[cat] / grand * 100
             with col:
                 st.metric(cat, fh(cat_sums[cat]), f"{pct:.0f}%")
@@ -656,9 +682,9 @@ with tab1:
 
         with left:
             pie_df = pd.DataFrame({
-                "Category": CATEGORIES,
-                "Hours": [cat_sums[c] for c in CATEGORIES],
-                "Hours_fmt": [fh(cat_sums[c]) for c in CATEGORIES],
+                "Category": active_cats,
+                "Hours": [cat_sums[c] for c in active_cats],
+                "Hours_fmt": [fh(cat_sums[c]) for c in active_cats],
             })
             fig_pie = px.pie(
                 pie_df,
@@ -684,7 +710,7 @@ with tab1:
             sort_order = fdf.sort_values("Total", ascending=False)["Name"].tolist()
             stack_melt = fdf.melt(
                 id_vars=["Name", "Region"],
-                value_vars=CATEGORIES,
+                value_vars=active_cats,
                 var_name="Category", value_name="Hours",
             )
             stack_melt["Hours_fmt"] = stack_melt["Hours"].apply(fh)
@@ -694,7 +720,7 @@ with tab1:
                 x="Name", y="Hours",
                 color="Category",
                 color_discrete_map=CAT_COLORS,
-                category_orders={"Name": sort_order, "Category": CATEGORIES},
+                category_orders={"Name": sort_order, "Category": active_cats},
                 title="Hours by Person — Stacked by Category",
                 labels={"Hours": "Hours (decimal)", "Name": ""},
                 custom_data=["Hours_fmt"],
@@ -715,7 +741,7 @@ with tab1:
             st.divider()
             st.markdown("#### US vs MX — Category Comparison")
 
-            reg_agg = fdf.groupby("Region")[CATEGORIES].sum().reset_index()
+            reg_agg = fdf.groupby("Region")[active_cats].sum().reset_index()
             reg_melt = reg_agg.melt(id_vars="Region", var_name="Category", value_name="Hours")
             reg_melt["Hours_fmt"] = reg_melt["Hours"].apply(fh)
 
@@ -749,21 +775,21 @@ with tab2:
         # ── Single-person focus ──
         row = fdf.iloc[0]
         st.markdown(f"## {row['Name']}")
-        st.markdown(f"`{row['Region']}` · Week of Apr 20–24, 2026")
+        st.markdown(f"`{row['Region']}` · {period_label}")
 
         m1, m2, m3 = st.columns(3)
         with m1:
             st.metric("Total Hours", fh(row["Total"]))
         with m2:
-            st.metric("EUC (Jira)", fh(row["EUC (Jira)"]))
+            st.metric("EUC", fh(row["EUC"]))
         with m3:
-            st.metric("TC (TechConnect)", fh(row["TC (TechConnect)"]))
+            st.metric("TechConnect", fh(row["TechConnect"]))
 
         st.divider()
 
-        cat_vals = [row[c] for c in CATEGORIES]
+        cat_vals = [row[c] for c in active_cats]
         cat_df = pd.DataFrame({
-            "Category": CATEGORIES,
+            "Category": active_cats,
             "Hours": cat_vals,
         })
         cat_df["Hours_fmt"] = cat_df["Hours"].apply(fh)
@@ -815,7 +841,7 @@ with tab2:
         sort_order_asc = fdf.sort_values("Total", ascending=True)["Name"].tolist()
         ind_melt = fdf.melt(
             id_vars=["Name", "Region"],
-            value_vars=CATEGORIES,
+            value_vars=active_cats,
             var_name="Category", value_name="Hours",
         )
         ind_melt["Hours_fmt"] = ind_melt["Hours"].apply(fh)
@@ -826,7 +852,7 @@ with tab2:
             color="Category",
             color_discrete_map=CAT_COLORS,
             orientation="h",
-            category_orders={"Name": sort_order_asc, "Category": CATEGORIES},
+            category_orders={"Name": sort_order_asc, "Category": active_cats},
             title="Hours by Individual — Stacked by Category",
             height=max(420, len(fdf) * 44),
             custom_data=["Hours_fmt"],
@@ -846,7 +872,7 @@ with tab2:
 
         grid_cols = st.columns(3)
         for i, (_, r) in enumerate(fdf.sort_values("Total", ascending=False).iterrows()):
-            dominant = max(CATEGORIES, key=lambda c: r[c])
+            dominant = max(active_cats, key=lambda c: r[c])
             pct_dom = r[dominant] / (r["Total"] or 1) * 100
             with grid_cols[i % 3]:
                 st.markdown(f"""
@@ -856,7 +882,7 @@ with tab2:
     <span style="background:#1f2937;color:#9ca3af;border-radius:4px;padding:2px 8px;font-size:0.75rem">{r['Region']}</span>
   </div>
   <div style="font-size:1.35rem;font-weight:700;margin-bottom:4px">{fh(r['Total'])}</div>
-  <div style="color:#6b7280;font-size:0.8rem;margin-bottom:8px">EUC {fh(r['EUC (Jira)'])} &nbsp;·&nbsp; TC {fh(r['TC (TechConnect)'])}</div>
+  <div style="color:#6b7280;font-size:0.8rem;margin-bottom:8px">EUC {fh(r['EUC'])} &nbsp;·&nbsp; TC {fh(r['TechConnect'])} &nbsp;·&nbsp; ID {fh(r['Identity'])}</div>
   <div style="font-size:0.82rem;color:{CAT_COLORS.get(dominant,'#fff')}">▶ {dominant}: {fh(r[dominant])} ({pct_dom:.0f}%)</div>
 </div>
 """, unsafe_allow_html=True)
@@ -868,7 +894,7 @@ with tab2:
 with tab3:
     selected_cat = st.selectbox(
         "Work category",
-        options=CATEGORIES,
+        options=active_cats,
         format_func=lambda x: CAT_LABELS[x],
     )
 
@@ -970,12 +996,14 @@ with tab3:
 with tab4:
     st.markdown(f"**{len(fdf)} members** · sorted by total hours")
 
-    if source_filter == "EUC (Jira)":
-        show_cols = ["Name", "Region", "Total", "EUC (Jira)"] + CATEGORIES
-    elif source_filter == "TC (TechConnect)":
-        show_cols = ["Name", "Region", "Total", "TC (TechConnect)"] + CATEGORIES
-    else:
-        show_cols = ["Name", "Region", "Total", "EUC (Jira)", "TC (TechConnect)"] + CATEGORIES
+    if source_filter == "EUC":
+        show_cols = ["Name", "Region", "Total", "EUC"] + active_cats
+    elif source_filter == "TechConnect":
+        show_cols = ["Name", "Region", "Total", "TechConnect"] + active_cats
+    elif source_filter == "Identity":
+        show_cols = ["Name", "Region", "Total", "Identity"] + active_cats
+    else:  # All
+        show_cols = ["Name", "Region", "Total", "EUC", "TechConnect", "Identity"] + active_cats
 
     # Sort numerically first, then format for display
     sorted_fdf = fdf.sort_values("Total", ascending=False)
@@ -1010,6 +1038,6 @@ with tab4:
     st.download_button(
         label="⬇️  Download as CSV",
         data=csv_data.to_csv(index=False),
-        file_name="EUC_W17_2026.csv",
+        file_name=f"EUC_{period_code.replace('–', '_')}.csv",
         mime="text/csv",
     )
