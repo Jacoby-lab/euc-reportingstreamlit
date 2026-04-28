@@ -569,7 +569,7 @@ with tab_dash:
             ),
             yaxis=dict(title="", tickfont=dict(size=11)),
             legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="left", x=0, font=dict(size=11)),
-            margin=dict(t=80, b=20, l=0, r=10),
+            margin=dict(t=10, b=20, l=0, r=10),
             height=max(340, len(team_df) * 42),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
@@ -579,14 +579,16 @@ with tab_dash:
         return fig
 
     with col_us:
+        st.markdown("##### 🇺🇸 US Team — Time by Category")
         st.plotly_chart(
-            make_normalized_bar(us_df, "🇺🇸 US Team - Time by Category"),
+            make_normalized_bar(us_df, ""),
             use_container_width=True,
         )
 
     with col_mx:
+        st.markdown("##### 🇲🇽 MX Team — Time by Category")
         st.plotly_chart(
-            make_normalized_bar(mx_df, "🇲🇽 MX Team - Time by Category"),
+            make_normalized_bar(mx_df, ""),
             use_container_width=True,
         )
 
