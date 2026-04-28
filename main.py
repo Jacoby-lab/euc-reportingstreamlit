@@ -137,32 +137,35 @@ def fetch_worklogs(week_start: str, week_end: str) -> pd.DataFrame:
         f'AND worklogDate <= "{week_end}"'
     )
 
-    # ── Paginate through all matching issues ──
-    issues, start_at = [], 0
+    # ── Paginate through all matching issues (cursor-based) ──
+    issues, next_page_token = [], None
     while True:
+        params = {
+            "jql":        jql,
+            "maxResults": 100,
+            "fields":     "summary,labels,worklog,project",
+        }
+        if next_page_token:
+            params["nextPageToken"] = next_page_token
+
         resp = requests.get(
             f"{base_url}/rest/api/3/search/jql",
             auth=auth, headers=headers,
-            params={
-                "jql":       jql,
-                "maxResults": 100,
-                "startAt":    start_at,
-                "fields":     "summary,labels,worklog,project",
-            },
+            params=params,
             timeout=30,
         )
         if not resp.ok:
             st.error(
                 f"Jira API error {resp.status_code}: {resp.reason}\n\n"
-                f"URL tried: `{base_url}/rest/api/3/search`\n\n"
+                f"URL tried: `{base_url}/rest/api/3/search/jql`\n\n"
                 f"Response: {resp.text[:500]}"
             )
             return pd.DataFrame()
         data = resp.json()
-        issues.extend(data["issues"])
-        if start_at + len(data["issues"]) >= data["total"]:
+        issues.extend(data.get("issues", []))
+        next_page_token = data.get("nextPageToken")
+        if not next_page_token:
             break
-        start_at += 100
 
     # ── Extract individual worklog rows ──
     rows = []
