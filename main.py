@@ -406,6 +406,22 @@ else:  # All
     fdf["_display_total"] = fdf["Total"]
     active_cats = CATEGORIES
 
+# ── Re-scope category columns to match source filter ─────────────────────
+# Without this, category columns include all sources even when one is selected,
+# causing totals and category sums to disagree.
+if source_filter != "All" and not _raw.empty:
+    _raw_src = _raw[_raw["source"] == source_filter]
+    _src_cat = (
+        _raw_src[_raw_src["Name"].isin(fdf["Name"])]
+        .groupby(["Name", "category"])["hours"]
+        .sum()
+        .unstack(fill_value=0.0)
+    )
+    for cat in CATEGORIES:
+        fdf[cat] = fdf["Name"].map(
+            _src_cat[cat] if cat in _src_cat.columns else pd.Series(dtype=float)
+        ).fillna(0.0)
+
 
 # ── Page header ───────────────────────────────────────────────────────────
 st.markdown("# EUC Team — Report")
