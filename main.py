@@ -50,7 +50,7 @@ CAT_LABELS = {
     "Incident":   "🚨 Incident",
 }
 
-REGION_COLORS = {"US": "#3B82F6", "MX": "#F59E0B", "NL": "#10B981"}
+REGION_COLORS = {"US": "#3B82F6", "MX": "#F59E0B"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -102,10 +102,10 @@ TEAM_REGIONS = {
     "Edgar Aquino Lopez":        "MX",
     "Joshua Ramos Dailey":       "MX",
     "Mildred Moron Guerrero":    "MX",
-    # NL
-    "Julian Hoeksema":           "NL",
-    "Armand Theunis":            "NL",
-    "Wessel Geest":              "NL",
+    # NL — rolled into US
+    "Julian Hoeksema":           "US",
+    "Armand Theunis":            "US",
+    "Wessel Geest":              "US",
 }
 
 TEAM_NAMES = set(TEAM_REGIONS.keys())
@@ -359,8 +359,8 @@ with st.sidebar:
     st.markdown("**Filters**")
     region_filter = st.multiselect(
         "Region",
-        options=["US", "MX", "NL"],
-        default=["US", "MX", "NL"],
+        options=["US", "MX"],
+        default=["US", "MX"],
     )
     source_filter = st.radio(
         "Ticket Source",
@@ -447,11 +447,9 @@ with tab_dash:
     us_df  = df[df["Region"] == "US"]
     mx_df  = df[df["Region"] == "MX"]
 
-    eu_df     = df[df["Region"] == "NL"]
     us_total  = us_df["Total"].sum()
     mx_total  = mx_df["Total"].sum()
-    eu_total  = eu_df["Total"].sum()
-    all_total = us_total + mx_total + eu_total or 1
+    all_total = us_total + mx_total or 1
 
     st.markdown(f"""
 <div style="margin-bottom:6px;">
@@ -464,11 +462,11 @@ with tab_dash:
 
     # ── Region summary row ──────────────────────────────────────────────
     st.markdown("##### Team Hours by Region")
-    r1, r2, r3, r4 = st.columns(4)
+    r1, r2, r3 = st.columns(3)
     with r1:
         st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1e3a5f,#1e3a8a);border-radius:12px;padding:20px 22px;text-align:center;">
-  <div style="color:#93c5fd;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">🇺🇸 US Team</div>
+  <div style="color:#93c5fd;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">US Team</div>
   <div style="font-size:2rem;font-weight:800;color:#fff">{fh(us_total)}</div>
   <div style="color:#93c5fd;font-size:0.82rem;margin-top:4px">{int((us_df["Total"] > 0).sum())} active members</div>
   <div style="color:#60a5fa;font-size:0.82rem">{us_total / all_total * 100:.0f}% of team total</div>
@@ -476,20 +474,12 @@ with tab_dash:
     with r2:
         st.markdown(f"""
 <div style="background:linear-gradient(135deg,#4a1942,#7c3aed);border-radius:12px;padding:20px 22px;text-align:center;">
-  <div style="color:#c4b5fd;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">🇲🇽 MX Team</div>
+  <div style="color:#c4b5fd;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">MX Team</div>
   <div style="font-size:2rem;font-weight:800;color:#fff">{fh(mx_total)}</div>
   <div style="color:#c4b5fd;font-size:0.82rem;margin-top:4px">{int((mx_df["Total"] > 0).sum())} active members</div>
   <div style="color:#a78bfa;font-size:0.82rem">{mx_total / all_total * 100:.0f}% of team total</div>
 </div>""", unsafe_allow_html=True)
     with r3:
-        st.markdown(f"""
-<div style="background:linear-gradient(135deg,#1a2e1a,#374151);border-radius:12px;padding:20px 22px;text-align:center;">
-  <div style="color:#9ca3af;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">🇳🇱 Netherlands</div>
-  <div style="font-size:2rem;font-weight:800;color:{'#fff' if eu_total > 0 else '#6b7280'}">{fh(eu_total)}</div>
-  <div style="color:#6b7280;font-size:0.82rem;margin-top:4px">{int((eu_df["Total"] > 0).sum())} active members</div>
-  <div style="color:#6b7280;font-size:0.82rem">{eu_total / all_total * 100:.0f}% of team total</div>
-</div>""", unsafe_allow_html=True)
-    with r4:
         st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1c1c2e,#0f172a);border:1px solid #334155;border-radius:12px;padding:20px 22px;text-align:center;">
   <div style="color:#94a3b8;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">⏱ Grand Total</div>
