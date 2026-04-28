@@ -579,14 +579,14 @@ with tab_dash:
         return fig
 
     with col_us:
-        st.markdown("##### 🇺🇸 US Team — Time by Category")
+        st.markdown("##### US Team — Time by Category")
         st.plotly_chart(
             make_normalized_bar(us_df, ""),
             use_container_width=True,
         )
 
     with col_mx:
-        st.markdown("##### 🇲🇽 MX Team — Time by Category")
+        st.markdown("##### MX Team — Time by Category")
         st.plotly_chart(
             make_normalized_bar(mx_df, ""),
             use_container_width=True,
