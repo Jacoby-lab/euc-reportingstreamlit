@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import requests
+from datetime import date, timedelta
 
 # ── Page config ───────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="EUC Weekly Report — 2026-W17",
+    page_title="EUC Weekly Report",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -74,57 +76,191 @@ def fh(d: float) -> str:
     return f"{t // 60}h {t % 60:02d}m"
 
 
-# ── Raw data ──────────────────────────────────────────────────────────────
-# Columns: Name, Region, Total, EUC (Jira), TC (TechConnect),
-#          KTLO, Initiative, Tech Debt, Svc Req, Incident
-_RAW = [
-    ("Nick Shelton",              "US", "38h 50m", "27h 30m", "11h 20m", "5h 48m",  "17h 24m", "4h 12m",  "8h 54m",  "2h 24m"),
-    ("Jake Snodgrass",            "US", "32h 50m", "32h 35m", "0h 15m",  "9h 18m",  "22h 0m",  "1h 30m",  "0h 0m",   "0h 0m"),
-    ("Matthew Davis",             "US", "32h 5m",  "15h 15m", "16h 50m", "9h 0m",   "0h 0m",   "6h 12m",  "15h 36m", "1h 12m"),
-    ("Khai Nguyen",               "US", "31h 30m", "29h 0m",  "2h 30m",  "26h 0m",  "0h 0m",   "3h 0m",   "2h 30m",  "0h 0m"),
-    ("Justin Pham",               "US", "30h 30m", "17h 0m",  "13h 30m", "6h 30m",  "0h 0m",   "10h 30m", "10h 6m",  "3h 24m"),
-    ("Nicholas Bowling",          "US", "30h 30m", "7h 30m",  "23h 0m",  "5h 30m",  "0h 0m",   "2h 0m",   "16h 12m", "6h 48m"),
-    ("Wes Hurd",                  "US", "29h 55m", "24h 0m",  "5h 55m",  "0h 0m",   "24h 0m",  "0h 0m",   "1h 12m",  "4h 48m"),
-    ("Kenneth Calvert",           "US", "29h 45m", "26h 30m", "3h 15m",  "10h 0m",  "15h 0m",  "1h 30m",  "3h 0m",   "0h 18m"),
-    ("Jaylon Martin",             "US", "12h 54m", "5h 42m",  "7h 12m",  "5h 42m",  "0h 0m",   "0h 0m",   "7h 12m",  "0h 0m"),
-    ("Hector Cossyleon",          "US", "7h 30m",  "2h 0m",   "5h 30m",  "2h 0m",   "0h 0m",   "0h 0m",   "5h 0m",   "0h 30m"),
-    ("Eduardo Rangel Ruiz",       "MX", "30h 6m",  "3h 54m",  "26h 12m", "3h 54m",  "0h 0m",   "0h 0m",   "20h 54m", "5h 18m"),
-    ("Alonso Renteria Olvera",    "MX", "29h 0m",  "2h 0m",   "27h 0m",  "2h 0m",   "0h 0m",   "0h 0m",   "27h 0m",  "0h 0m"),
-    ("Santiago Morales",          "MX", "23h 49m", "9h 18m",  "14h 31m", "7h 0m",   "0h 0m",   "2h 18m",  "13h 30m", "1h 0m"),
-    ("Antonio Lopez",             "MX", "19h 15m", "11h 25m", "7h 50m",  "10h 12m", "1h 12m",  "0h 0m",   "7h 48m",  "0h 0m"),
-    ("Luis Tejeda Sosa",          "MX", "18h 40m", "8h 0m",   "10h 40m", "8h 0m",   "0h 0m",   "0h 0m",   "6h 18m",  "4h 18m"),
-    ("Esaú Gallardo",             "MX", "14h 29m", "8h 38m",  "5h 51m",  "8h 36m",  "0h 0m",   "0h 0m",   "5h 48m",  "0h 0m"),
-    ("Roberto Gaitan Zamudio",    "MX", "11h 0m",  "0h 0m",   "11h 0m",  "0h 0m",   "0h 0m",   "0h 0m",   "11h 0m",  "0h 0m"),
-    ("Gabriela Martinez Atriano", "MX", "4h 0m",   "4h 0m",   "0h 0m",   "4h 0m",   "0h 0m",   "0h 0m",   "0h 0m",   "0h 0m"),
-]
-
-_COLS = [
-    "Name", "Region",
-    "_total_s", "_euc_s", "_tc_s",
-    "_ktlo_s", "_init_s", "_debt_s", "_svcreq_s", "_incident_s",
-]
-
-df = pd.DataFrame(_RAW, columns=_COLS)
-
-_COL_MAP = {
-    "_total_s":    "Total",
-    "_euc_s":      "EUC (Jira)",
-    "_tc_s":       "TC (TechConnect)",
-    "_ktlo_s":     "KTLO",
-    "_init_s":     "Initiative",
-    "_debt_s":     "Tech Debt",
-    "_svcreq_s":   "Svc Req",
-    "_incident_s": "Incident",
+# ── Team registry — maps Jira display names → region ─────────────────────
+TEAM_REGIONS = {
+    "Nick Shelton":              "US",
+    "Jake Snodgrass":            "US",
+    "Matthew Davis":             "US",
+    "Khai Nguyen":               "US",
+    "Justin Pham":               "US",
+    "Nicholas Bowling":          "US",
+    "Wes Hurd":                  "US",
+    "Kenneth Calvert":           "US",
+    "Jaylon Martin":             "US",
+    "Hector Cossyleon":          "US",
+    "Eduardo Rangel Ruiz":       "MX",
+    "Alonso Renteria Olvera":    "MX",
+    "Santiago Morales":          "MX",
+    "Antonio Lopez":             "MX",
+    "Luis Tejeda Sosa":          "MX",
+    "Esaú Gallardo":             "MX",
+    "Roberto Gaitan Zamudio":    "MX",
+    "Gabriela Martinez Atriano": "MX",
+    "Edgar Aquino Lopez":        "MX",
+    "Joshua Ramos Dailey":       "MX",
+    "Julian Hoeksema":           "NL",
 }
-for raw_col, clean_col in _COL_MAP.items():
-    df[clean_col] = df[raw_col].apply(ph)
-df = df[[c for c in df.columns if not c.startswith("_")]]
+
+# ── Jira label → category mapping ────────────────────────────────────────
+LABEL_TO_CAT = {
+    "ktlo":            "KTLO",
+    "initiative":      "Initiative",
+    "tech_debt":       "Tech Debt",
+    "tech debt":       "Tech Debt",
+    "service_request": "Svc Req",
+    "service request": "Svc Req",
+    "incident":        "Incident",
+}
+
+
+# ── Jira data fetch ───────────────────────────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_worklogs(week_start: str, week_end: str) -> pd.DataFrame:
+    """Pull all EUC + TC worklogs for the given date range from Jira."""
+    try:
+        base_url = st.secrets["jira"]["base_url"].rstrip("/")
+        email    = st.secrets["jira"]["email"]
+        token    = st.secrets["jira"]["api_token"]
+        # Optional: comma-separated project keys, e.g. "EUC,TC"
+        projects = [p.strip() for p in
+                    st.secrets["jira"].get("projects", "EUC").split(",")]
+    except KeyError as e:
+        st.error(f"Missing Jira secret: {e}. Check Settings → Secrets.")
+        return pd.DataFrame()
+
+    auth    = (email, token)
+    headers = {"Accept": "application/json"}
+    proj_str = ", ".join(f'"{p}"' for p in projects)
+    jql = (
+        f'project in ({proj_str}) '
+        f'AND worklogDate >= "{week_start}" '
+        f'AND worklogDate <= "{week_end}"'
+    )
+
+    # ── Paginate through all matching issues ──
+    issues, start_at = [], 0
+    while True:
+        resp = requests.get(
+            f"{base_url}/rest/api/3/search",
+            auth=auth, headers=headers,
+            params={
+                "jql":       jql,
+                "maxResults": 100,
+                "startAt":    start_at,
+                "fields":     "summary,labels,worklog,project",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        issues.extend(data["issues"])
+        if start_at + len(data["issues"]) >= data["total"]:
+            break
+        start_at += 100
+
+    # ── Extract individual worklog rows ──
+    rows = []
+    for issue in issues:
+        fields      = issue["fields"]
+        raw_labels  = [l.lower() for l in fields.get("labels", [])]
+        project_key = fields.get("project", {}).get("key", "")
+        source      = "EUC (Jira)" if project_key == "EUC" else "TC (TechConnect)"
+
+        # First matching label wins; unlabeled EUC tickets default to KTLO
+        category = next(
+            (LABEL_TO_CAT[l] for l in raw_labels if l in LABEL_TO_CAT),
+            "KTLO" if source == "EUC (Jira)" else "Svc Req",
+        )
+
+        wl_data  = fields.get("worklog", {})
+        worklogs = wl_data.get("worklogs", [])
+
+        # Fetch remaining worklogs if Jira only returned the first 20
+        if wl_data.get("total", 0) > len(worklogs):
+            wl_resp = requests.get(
+                f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
+                auth=auth, headers=headers, timeout=30,
+            )
+            if wl_resp.ok:
+                worklogs = wl_resp.json().get("worklogs", [])
+
+        for wl in worklogs:
+            log_date = wl["started"][:10]
+            if week_start <= log_date <= week_end:
+                author = wl["author"]["displayName"]
+                rows.append({
+                    "Name":     author,
+                    "Region":   TEAM_REGIONS.get(author, "Unknown"),
+                    "source":   source,
+                    "category": category,
+                    "hours":    wl["timeSpentSeconds"] / 3600,
+                    "date":     log_date,
+                    "issue":    issue["key"],
+                })
+
+    empty_cols = ["Name", "Region", "source", "category", "hours", "date", "issue"]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
+
+
+def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate raw worklog rows into the per-person summary the app uses."""
+    all_cols = ["Name", "Region", "Total", "EUC (Jira)", "TC (TechConnect)"] + CATEGORIES
+    if raw.empty:
+        return pd.DataFrame(columns=all_cols)
+
+    totals = raw.groupby(["Name", "Region"])["hours"].sum().reset_index()
+    totals.columns = ["Name", "Region", "Total"]
+
+    src_piv = raw.pivot_table(
+        index=["Name", "Region"], columns="source",
+        values="hours", aggfunc="sum", fill_value=0,
+    ).reset_index()
+    for col in ["EUC (Jira)", "TC (TechConnect)"]:
+        if col not in src_piv.columns:
+            src_piv[col] = 0.0
+
+    cat_piv = raw.pivot_table(
+        index=["Name", "Region"], columns="category",
+        values="hours", aggfunc="sum", fill_value=0,
+    ).reset_index()
+    for cat in CATEGORIES:
+        if cat not in cat_piv.columns:
+            cat_piv[cat] = 0.0
+
+    result = (
+        totals
+        .merge(src_piv[["Name", "Region", "EUC (Jira)", "TC (TechConnect)"]], on=["Name", "Region"], how="left")
+        .merge(cat_piv[["Name", "Region"] + CATEGORIES], on=["Name", "Region"], how="left")
+        .fillna(0.0)
+    )
+    return result
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📊 EUC Weekly")
-    st.markdown("**Apr 20–24, 2026 · W17**")
+    st.divider()
+
+    # Week picker — snaps to Monday of the selected week
+    _today  = date.today()
+    _monday = _today - timedelta(days=_today.weekday())
+    picked  = st.date_input(
+        "📅 Week",
+        value=_monday,
+        help="Pick any day — the full Mon–Fri week is loaded",
+    )
+    week_monday  = picked - timedelta(days=picked.weekday())
+    week_friday  = week_monday + timedelta(days=4)
+    week_start   = week_monday.strftime("%Y-%m-%d")
+    week_end     = week_friday.strftime("%Y-%m-%d")
+    week_label   = (
+        f"{week_monday.strftime('%b %-d')}–{week_friday.strftime('%-d, %Y')}"
+        if week_monday.month == week_friday.month
+        else f"{week_monday.strftime('%b %-d')}–{week_friday.strftime('%b %-d, %Y')}"
+    )
+    week_iso     = f"W{week_monday.isocalendar()[1]:02d}"
+    st.caption(f"{week_label} · {week_iso}")
+
     st.divider()
 
     search_query = st.text_input(
@@ -145,14 +281,23 @@ with st.sidebar:
         help="EUC = Jira EUC project · TC = TechConnect helpdesk",
     )
     st.divider()
-    st.caption("18 members · 426h 38m total  \nJira EUC + TechConnect")
+    st.caption("Jira EUC + TechConnect · refreshes hourly")
+
+
+# ── Load data ─────────────────────────────────────────────────────────────
+with st.spinner(f"Loading Jira data for {week_label}…"):
+    _raw = fetch_worklogs(week_start, week_end)
+    df   = build_summary_df(_raw)
+
+_active  = int((df["Total"] > 0).sum()) if not df.empty else 0
+_tot_all = fh(df["Total"].sum()) if not df.empty else "0h 00m"
 
 
 # ── Apply filters ─────────────────────────────────────────────────────────
-mask = df["Region"].isin(region_filter)
+mask = df["Region"].isin(region_filter) if not df.empty else pd.Series([], dtype=bool)
 if search_query.strip():
     mask &= df["Name"].str.contains(search_query.strip(), case=False, na=False)
-fdf = df[mask].copy()
+fdf = df[mask].copy() if not df.empty else df.copy()
 
 if source_filter == "EUC (Jira)":
     fdf["_display_total"] = fdf["EUC (Jira)"]
@@ -164,9 +309,11 @@ else:
 
 # ── Page header ───────────────────────────────────────────────────────────
 st.markdown("# EUC Team — Weekly Report")
-st.markdown("**Week of Apr 20–24, 2026 · 2026-W17**")
+st.markdown(f"**Week of {week_label} · {week_iso}**")
 
-if search_query.strip():
+if df.empty:
+    st.warning(f"No worklogs found for {week_label}. The team may not have logged time yet, or check your Jira project key in secrets.")
+elif search_query.strip():
     st.info(
         f"Showing results for **\"{search_query.strip()}\"** · "
         f"{len(fdf)} member(s) · {', '.join(region_filter) if region_filter else 'No regions'} · {source_filter}"
@@ -191,15 +338,16 @@ with tab_dash:
     us_df  = df[df["Region"] == "US"]
     mx_df  = df[df["Region"] == "MX"]
 
+    eu_df     = df[df["Region"] == "NL"]
     us_total  = us_df["Total"].sum()
     mx_total  = mx_df["Total"].sum()
-    eu_total  = 0.0  # Julian Hoeksema: 0h logged W17
-    all_total = us_total + mx_total + eu_total
+    eu_total  = eu_df["Total"].sum()
+    all_total = us_total + mx_total + eu_total or 1
 
-    st.markdown("""
+    st.markdown(f"""
 <div style="margin-bottom:6px;">
   <span style="font-size:1.5rem;font-weight:800;letter-spacing:-0.5px">EUC Team — Executive Dashboard</span><br>
-  <span style="color:#6b7280;font-size:0.9rem">Week of Apr 20–24, 2026 &nbsp;·&nbsp; 2026-W17 &nbsp;·&nbsp; Full team · Sidebar filters not applied</span>
+  <span style="color:#6b7280;font-size:0.9rem">Week of {week_label} &nbsp;·&nbsp; {week_iso} &nbsp;·&nbsp; Full team · Sidebar filters not applied</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -228,9 +376,9 @@ with tab_dash:
         st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1a2e1a,#374151);border-radius:12px;padding:20px 22px;text-align:center;">
   <div style="color:#9ca3af;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">🇳🇱 Netherlands</div>
-  <div style="font-size:2rem;font-weight:800;color:#6b7280">0h 00m</div>
-  <div style="color:#6b7280;font-size:0.82rem;margin-top:4px">0 active members</div>
-  <div style="color:#6b7280;font-size:0.82rem">0% of team total</div>
+  <div style="font-size:2rem;font-weight:800;color:{'#fff' if eu_total > 0 else '#6b7280'}">{fh(eu_total)}</div>
+  <div style="color:#6b7280;font-size:0.82rem;margin-top:4px">{int((eu_df["Total"] > 0).sum())} active members</div>
+  <div style="color:#6b7280;font-size:0.82rem">{eu_total / all_total * 100:.0f}% of team total</div>
 </div>""", unsafe_allow_html=True)
     with r4:
         st.markdown(f"""
@@ -388,11 +536,12 @@ with tab_dash:
     st.plotly_chart(fig_tree, use_container_width=True)
 
     # ── Footer note ──────────────────────────────────────────────────────
-    st.markdown("""
+    _zero_members = [r["Name"] for _, r in df.iterrows() if r["Total"] == 0] if not df.empty else []
+    _zero_note = " · " + ", ".join(_zero_members) + " logged 0h" if _zero_members else ""
+    st.markdown(f"""
 <div style="color:#4b5563;font-size:0.78rem;margin-top:8px;border-top:1px solid #1f2937;padding-top:10px;">
-  Source: Jira EUC project + TechConnect · W17 (Apr 20–24 2026) ·
-  KTLO = Keep The Lights On · TC tickets classified as Svc Req or Incident ·
-  Edgar Aquino Lopez, Joshua Ramos Dailey (MX) and Julian Hoeksema (NL) logged 0h this week.
+  Source: Jira EUC + TechConnect · {week_label} · {week_iso} ·
+  KTLO = Keep The Lights On · TC tickets default to Svc Req or Incident{_zero_note}
 </div>
 """, unsafe_allow_html=True)
 
