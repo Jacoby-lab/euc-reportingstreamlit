@@ -151,7 +151,13 @@ def fetch_worklogs(week_start: str, week_end: str) -> pd.DataFrame:
             },
             timeout=30,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            st.error(
+                f"Jira API error {resp.status_code}: {resp.reason}\n\n"
+                f"URL tried: `{base_url}/rest/api/3/search`\n\n"
+                f"Response: {resp.text[:500]}"
+            )
+            return pd.DataFrame()
         data = resp.json()
         issues.extend(data["issues"])
         if start_at + len(data["issues"]) >= data["total"]:
