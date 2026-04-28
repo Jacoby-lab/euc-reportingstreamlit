@@ -598,14 +598,14 @@ with tab_dash:
         st.markdown("##### US Team — Time by Category")
         st.plotly_chart(
             make_normalized_bar(us_df, ""),
-            use_container_width=True,
+            width='stretch',
         )
 
     with col_mx:
         st.markdown("##### MX Team — Time by Category")
         st.plotly_chart(
             make_normalized_bar(mx_df, ""),
-            use_container_width=True,
+            width='stretch',
         )
 
     st.divider()
@@ -651,7 +651,7 @@ with tab_dash:
         margin=dict(t=10, b=0, l=0, r=0),
         paper_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig_tree, use_container_width=True)
+    st.plotly_chart(fig_tree, width='stretch')
 
     # ── Footer note ──────────────────────────────────────────────────────
     _zero_members = [r["Name"] for _, r in df.iterrows() if r["Total"] == 0] if not df.empty else []
@@ -722,7 +722,7 @@ with tab1:
                 height=380,
                 margin=dict(t=40, b=0, l=0, r=0),
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width='stretch')
 
         with right:
             sort_order = fdf.sort_values("Total", ascending=False)["Name"].tolist()
@@ -752,7 +752,7 @@ with tab1:
                 height=380,
                 margin=dict(t=60, b=80, l=0, r=0),
             )
-            st.plotly_chart(fig_stack, use_container_width=True)
+            st.plotly_chart(fig_stack, width='stretch')
 
         # ── US vs MX comparison ──
         if len(region_filter) > 1 and not search_query.strip():
@@ -779,7 +779,7 @@ with tab1:
                 margin=dict(t=10, b=20, l=0, r=0),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
             )
-            st.plotly_chart(fig_reg, use_container_width=True)
+            st.plotly_chart(fig_reg, width='stretch')
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -827,7 +827,7 @@ with tab2:
                 hovertemplate="<b>%{label}</b><br>%{customdata[0]} (%{customdata[1]:.1f}%)<extra></extra>",
             )
             fig_p.update_layout(showlegend=False, height=360)
-            st.plotly_chart(fig_p, use_container_width=True)
+            st.plotly_chart(fig_p, width='stretch')
 
         with p2:
             cat_sorted = cat_df.sort_values("Hours")
@@ -850,7 +850,7 @@ with tab2:
                 xaxis_title="Hours (decimal)",
                 margin=dict(t=20, r=80),
             )
-            st.plotly_chart(fig_b, use_container_width=True)
+            st.plotly_chart(fig_b, width='stretch')
 
     else:
         # ── Multi-person view ──
@@ -883,7 +883,7 @@ with tab2:
             margin=dict(t=60, b=10, l=0, r=0),
             xaxis_title="Hours (decimal)",
         )
-        st.plotly_chart(fig_ind, use_container_width=True)
+        st.plotly_chart(fig_ind, width='stretch')
 
         st.divider()
         st.markdown("#### Member Cards")
@@ -974,7 +974,7 @@ with tab3:
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 margin=dict(t=60, r=130, b=20, l=0),
             )
-            st.plotly_chart(fig_cat, use_container_width=True)
+            st.plotly_chart(fig_cat, width='stretch')
 
         with cr:
             if len(region_filter) > 1:
@@ -997,7 +997,7 @@ with tab3:
                     height=260,
                     margin=dict(t=40, b=0, l=0, r=0),
                 )
-                st.plotly_chart(fig_r, use_container_width=True)
+                st.plotly_chart(fig_r, width='stretch')
 
             st.markdown("**Top contributors**")
             for _, r in cat_tab.head(5).iterrows():
@@ -1032,7 +1032,7 @@ with tab4:
 
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=min(700, 80 + len(display_df) * 37),
     )
@@ -1046,7 +1046,7 @@ with tab4:
                 totals[col] = fh(fdf[col].sum())
         st.dataframe(
             pd.DataFrame([totals])[show_cols],
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 
