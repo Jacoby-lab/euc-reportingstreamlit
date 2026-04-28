@@ -18,7 +18,7 @@ st.markdown("""
         background: #0d1117;
         border: 1px solid #21262d;
         border-radius: 10px;
-        padding: 14px 18px;
+        padding: 14px 18px;T
     }
     .stTabs [data-baseweb="tab"] { font-weight: 500; }
     .member-card {
@@ -50,7 +50,7 @@ CAT_LABELS = {
     "Incident":   "🚨 Incident",
 }
 
-REGION_COLORS = {"US": "#3B82F6", "MX": "#F59E0B"}
+REGION_COLORS = {"US": "#3B82F6", "MX": "#F59E0B", "NL": "#10B981"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -78,6 +78,7 @@ def fh(d: float) -> str:
 
 # ── Team registry — maps Jira display names → region ─────────────────────
 TEAM_REGIONS = {
+    # US
     "Nick Shelton":              "US",
     "Jake Snodgrass":            "US",
     "Matthew Davis":             "US",
@@ -88,18 +89,26 @@ TEAM_REGIONS = {
     "Kenneth Calvert":           "US",
     "Jaylon Martin":             "US",
     "Hector Cossyleon":          "US",
+    # MX
     "Eduardo Rangel Ruiz":       "MX",
     "Alonso Renteria Olvera":    "MX",
     "Santiago Morales":          "MX",
     "Antonio Lopez":             "MX",
     "Luis Tejeda Sosa":          "MX",
     "Esaú Gallardo":             "MX",
+    "Esau Gallardo":             "MX",  # accent-free variant in Jira
     "Roberto Gaitan Zamudio":    "MX",
     "Gabriela Martinez Atriano": "MX",
     "Edgar Aquino Lopez":        "MX",
     "Joshua Ramos Dailey":       "MX",
+    "Mildred Moron Guerrero":    "MX",
+    # NL
     "Julian Hoeksema":           "NL",
+    "Armand Theunis":            "NL",
+    "Wessel Geest":              "NL",
 }
+
+TEAM_NAMES = set(TEAM_REGIONS.keys())
 
 # ── Jira label → category mapping ────────────────────────────────────────
 LABEL_TO_CAT = {
@@ -115,7 +124,7 @@ LABEL_TO_CAT = {
 
 # ── Jira data fetch ───────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_worklogs(week_start: str, week_end: str) -> pd.DataFrame:
+def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
     """Pull all EUC + TC worklogs for the given date range from Jira."""
     try:
         base_url = st.secrets["jira"]["base_url"].rstrip("/")
@@ -133,8 +142,8 @@ def fetch_worklogs(week_start: str, week_end: str) -> pd.DataFrame:
     proj_str = ", ".join(f'"{p}"' for p in projects)
     jql = (
         f'project in ({proj_str}) '
-        f'AND worklogDate >= "{week_start}" '
-        f'AND worklogDate <= "{week_end}"'
+        f'AND worklogDate >= "{date_start}" '
+        f'AND worklogDate <= "{date_end}"'
     )
 
     # ── Paginate through all matching issues (cursor-based) ──
@@ -195,17 +204,20 @@ def fetch_worklogs(week_start: str, week_end: str) -> pd.DataFrame:
 
         for wl in worklogs:
             log_date = wl["started"][:10]
-            if week_start <= log_date <= week_end:
-                author = wl["author"]["displayName"]
-                rows.append({
-                    "Name":     author,
-                    "Region":   TEAM_REGIONS.get(author, "Unknown"),
-                    "source":   source,
-                    "category": category,
-                    "hours":    wl["timeSpentSeconds"] / 3600,
-                    "date":     log_date,
-                    "issue":    issue["key"],
-                })
+            if not (date_start <= log_date <= date_end):
+                continue
+            author = wl["author"]["displayName"]
+            if author not in TEAM_NAMES:
+                continue
+            rows.append({
+                "Name":     author,
+                "Region":   TEAM_REGIONS.get(author, "Unknown"),
+                "source":   source,
+                "category": category,
+                "hours":    wl["timeSpentSeconds"] / 3600,
+                "date":     log_date,
+                "issue":    issue["key"],
+            })
 
     empty_cols = ["Name", "Region", "source", "category", "hours", "date", "issue"]
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
@@ -247,28 +259,81 @@ def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📊 EUC Weekly")
+    st.markdown("## 📊 EUC Report")
     st.divider()
 
-    # Week picker — snaps to Monday of the selected week
     _today  = date.today()
     _monday = _today - timedelta(days=_today.weekday())
-    picked  = st.date_input(
-        "📅 Week",
-        value=_monday,
-        help="Pick any day — the full Mon–Fri week is loaded",
+
+    range_type = st.selectbox(
+        "📅 Date Range",
+        ["Weekly", "Bi-Weekly", "Monthly", "Quarterly", "Yearly", "Custom"],
     )
-    week_monday  = picked - timedelta(days=picked.weekday())
-    week_friday  = week_monday + timedelta(days=4)
-    week_start   = week_monday.strftime("%Y-%m-%d")
-    week_end     = week_friday.strftime("%Y-%m-%d")
-    week_label   = (
-        f"{week_monday.strftime('%b %-d')}–{week_friday.strftime('%-d, %Y')}"
-        if week_monday.month == week_friday.month
-        else f"{week_monday.strftime('%b %-d')}–{week_friday.strftime('%b %-d, %Y')}"
-    )
-    week_iso     = f"W{week_monday.isocalendar()[1]:02d}"
-    st.caption(f"{week_label} · {week_iso}")
+
+    if range_type == "Weekly":
+        picked     = st.date_input("Week (pick any day)", value=_monday)
+        date_start = picked - timedelta(days=picked.weekday())
+        date_end   = date_start + timedelta(days=6)
+        period_code  = f"W{date_start.isocalendar()[1]:02d}"
+
+    elif range_type == "Bi-Weekly":
+        picked     = st.date_input("Start week (pick any day)", value=_monday)
+        date_start = picked - timedelta(days=picked.weekday())
+        date_end   = date_start + timedelta(days=13)
+        period_code  = f"W{date_start.isocalendar()[1]:02d}–W{date_end.isocalendar()[1]:02d}"
+
+    elif range_type == "Monthly":
+        c1, c2     = st.columns(2)
+        sel_year   = int(c1.number_input("Year",  value=_today.year,  min_value=2020, max_value=2035, step=1))
+        sel_month  = int(c2.number_input("Month", value=_today.month, min_value=1,    max_value=12,   step=1))
+        date_start = date(sel_year, sel_month, 1)
+        _nm        = date_start.replace(day=28) + timedelta(days=4)
+        date_end   = _nm - timedelta(days=_nm.day)
+        period_code  = date_start.strftime("%Y-%m")
+
+    elif range_type == "Quarterly":
+        c1, c2   = st.columns(2)
+        sel_year = int(c1.number_input("Year", value=_today.year, min_value=2020, max_value=2035, step=1))
+        sel_q    = c2.selectbox("Quarter", ["Q1", "Q2", "Q3", "Q4"])
+        _qmap    = {"Q1": (1,3,31), "Q2": (4,6,30), "Q3": (7,9,30), "Q4": (10,12,31)}
+        _sm, _em, _ed = _qmap[sel_q]
+        date_start   = date(sel_year, _sm, 1)
+        date_end     = date(sel_year, _em, _ed)
+        period_code  = f"{sel_year}-{sel_q}"
+
+    elif range_type == "Yearly":
+        sel_year   = int(st.number_input("Year", value=_today.year, min_value=2020, max_value=2035, step=1))
+        date_start = date(sel_year, 1, 1)
+        date_end   = date(sel_year, 12, 31)
+        period_code  = str(sel_year)
+
+    else:  # Custom
+        _range = st.date_input(
+            "Date range",
+            value=[_monday - timedelta(weeks=1), _monday + timedelta(days=4)],
+        )
+        date_start = _range[0] if isinstance(_range, (list, tuple)) else _range
+        date_end   = _range[1] if isinstance(_range, (list, tuple)) and len(_range) > 1 else date_start
+        period_code  = "Custom"
+
+    # Build human-readable period label
+    if date_start.month == date_end.month and date_start.year == date_end.year:
+        period_label = f"{date_start.strftime('%b %-d')}–{date_end.strftime('%-d, %Y')}"
+    elif date_start.year == date_end.year:
+        period_label = f"{date_start.strftime('%b %-d')}–{date_end.strftime('%b %-d, %Y')}"
+    else:
+        period_label = f"{date_start.strftime('%b %-d, %Y')}–{date_end.strftime('%b %-d, %Y')}"
+
+    if range_type == "Monthly":
+        period_label = date_start.strftime("%B %Y")
+    elif range_type == "Quarterly":
+        period_label = f"{sel_q} {sel_year}"
+    elif range_type == "Yearly":
+        period_label = str(sel_year)
+
+    date_start_s = date_start.strftime("%Y-%m-%d")
+    date_end_s   = date_end.strftime("%Y-%m-%d")
+    st.caption(f"{period_label} · {period_code}")
 
     st.divider()
 
@@ -281,8 +346,8 @@ with st.sidebar:
     st.markdown("**Filters**")
     region_filter = st.multiselect(
         "Region",
-        options=["US", "MX"],
-        default=["US", "MX"],
+        options=["US", "MX", "NL"],
+        default=["US", "MX", "NL"],
     )
     source_filter = st.radio(
         "Ticket Source",
@@ -294,8 +359,8 @@ with st.sidebar:
 
 
 # ── Load data ─────────────────────────────────────────────────────────────
-with st.spinner(f"Loading Jira data for {week_label}…"):
-    _raw = fetch_worklogs(week_start, week_end)
+with st.spinner(f"Loading Jira data for {period_label}…"):
+    _raw = fetch_worklogs(date_start_s, date_end_s)
     df   = build_summary_df(_raw)
 
 _active  = int((df["Total"] > 0).sum()) if not df.empty else 0
@@ -317,11 +382,11 @@ else:
 
 
 # ── Page header ───────────────────────────────────────────────────────────
-st.markdown("# EUC Team — Weekly Report")
-st.markdown(f"**Week of {week_label} · {week_iso}**")
+st.markdown("# EUC Team — Report")
+st.markdown(f"**{period_label} · {period_code}**")
 
 if df.empty:
-    st.warning(f"No worklogs found for {week_label}. The team may not have logged time yet, or check your Jira project key in secrets.")
+    st.warning(f"No worklogs found for {period_label}. The team may not have logged time yet, or check your Jira project key in secrets.")
 elif search_query.strip():
     st.info(
         f"Showing results for **\"{search_query.strip()}\"** · "
