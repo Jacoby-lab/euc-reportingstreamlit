@@ -184,18 +184,15 @@ def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
         fields      = issue["fields"]
         raw_labels  = [l.lower() for l in fields.get("labels", [])]
         project_key = fields.get("project", {}).get("key", "")
-        if project_key == "EUC":
-            source = "EUC"
-        elif project_key == "ID":
-            source = "Identity"
+        if project_key in ("EUC", "ID"):
+            source = "EUC"  # ID (Identity) rolls up into EUC bucket
         else:
             source = "TechConnect"  # TC, End User Computing, End User Computing Mexico
 
-        # First matching label wins; defaults by source if unlabeled
-        _default_cat = {"EUC": "KTLO", "TechConnect": "Svc Req", "Identity": "Initiative"}
+        # First matching label wins; EUC/ID unlabeled → KTLO, TC unlabeled → Svc Req
         category = next(
             (LABEL_TO_CAT[l] for l in raw_labels if l in LABEL_TO_CAT),
-            _default_cat.get(source, "KTLO"),
+            "KTLO" if source == "EUC" else "Svc Req",
         )
 
         wl_data  = fields.get("worklog", {})
@@ -233,7 +230,7 @@ def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
 
 def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
     """Aggregate raw worklog rows into the per-person summary the app uses."""
-    src_cols = ["EUC", "TechConnect", "Identity"]
+    src_cols = ["EUC", "TechConnect"]
     all_cols  = ["Name", "Region", "Total"] + src_cols + CATEGORIES
     if raw.empty:
         return pd.DataFrame(columns=all_cols)
@@ -367,15 +364,14 @@ with st.sidebar:
     )
     source_filter = st.radio(
         "Ticket Source",
-        options=["All", "EUC", "TechConnect", "Identity"],
+        options=["All", "EUC", "TechConnect"],
         help=(
-            "EUC → KTLO, Initiative, Tech Debt\n"
-            "TechConnect → Svc Req, Incident\n"
-            "Identity → Initiative, Tech Debt"
+            "EUC → KTLO, Initiative, Tech Debt (includes Identity project)\n"
+            "TechConnect → Svc Req, Incident"
         ),
     )
     st.divider()
-    st.caption("Jira EUC · TechConnect · Identity · refreshes hourly")
+    st.caption("Jira EUC · TechConnect · refreshes hourly")
 
 
 # ── Load data ─────────────────────────────────────────────────────────────
@@ -399,9 +395,6 @@ if source_filter == "EUC":
 elif source_filter == "TechConnect":
     fdf["_display_total"] = fdf["TechConnect"]
     active_cats = ["Svc Req", "Incident"]
-elif source_filter == "Identity":
-    fdf["_display_total"] = fdf["Identity"]
-    active_cats = ["Initiative", "Tech Debt"]
 else:  # All
     fdf["_display_total"] = fdf["Total"]
     active_cats = CATEGORIES
@@ -799,7 +792,7 @@ with tab2:
         with m1:
             st.metric("Total Hours", fh(row["Total"]))
         with m2:
-            st.metric("EUC", fh(row["EUC"]))
+            st.metric("EUC (incl. Identity)", fh(row["EUC"]))
         with m3:
             st.metric("TechConnect", fh(row["TechConnect"]))
 
@@ -900,7 +893,7 @@ with tab2:
     <span style="background:#1f2937;color:#9ca3af;border-radius:4px;padding:2px 8px;font-size:0.75rem">{r['Region']}</span>
   </div>
   <div style="font-size:1.35rem;font-weight:700;margin-bottom:4px">{fh(r['Total'])}</div>
-  <div style="color:#6b7280;font-size:0.8rem;margin-bottom:8px">EUC {fh(r['EUC'])} &nbsp;·&nbsp; TC {fh(r['TechConnect'])} &nbsp;·&nbsp; ID {fh(r['Identity'])}</div>
+  <div style="color:#6b7280;font-size:0.8rem;margin-bottom:8px">EUC {fh(r['EUC'])} &nbsp;·&nbsp; TC {fh(r['TechConnect'])}</div>
   <div style="font-size:0.82rem;color:{CAT_COLORS.get(dominant,'#fff')}">▶ {dominant}: {fh(r[dominant])} ({pct_dom:.0f}%)</div>
 </div>
 """, unsafe_allow_html=True)
@@ -1018,10 +1011,8 @@ with tab4:
         show_cols = ["Name", "Region", "Total", "EUC"] + active_cats
     elif source_filter == "TechConnect":
         show_cols = ["Name", "Region", "Total", "TechConnect"] + active_cats
-    elif source_filter == "Identity":
-        show_cols = ["Name", "Region", "Total", "Identity"] + active_cats
     else:  # All
-        show_cols = ["Name", "Region", "Total", "EUC", "TechConnect", "Identity"] + active_cats
+        show_cols = ["Name", "Region", "Total", "EUC", "TechConnect"] + active_cats
 
     # Sort numerically first, then format for display
     sorted_fdf = fdf.sort_values("Total", ascending=False)
