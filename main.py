@@ -732,7 +732,7 @@ with tab1:
                 color="Category",
                 color_discrete_map=CAT_COLORS,
                 category_orders={"Name": sort_order, "Category": active_cats},
-                title="Hours by Person — Stacked by Category",
+                title="",
                 labels={"Hours": "Hours (decimal)", "Name": ""},
                 custom_data=["Hours_fmt"],
             )
@@ -743,8 +743,9 @@ with tab1:
                 xaxis_tickangle=-30,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                 height=380,
-                margin=dict(t=60, b=80, l=0, r=0),
+                margin=dict(t=40, b=80, l=0, r=0),
             )
+            st.markdown("**Hours by Person — Stacked by Category**")
             st.plotly_chart(fig_stack, width='stretch')
 
         # ── US vs MX comparison ──
