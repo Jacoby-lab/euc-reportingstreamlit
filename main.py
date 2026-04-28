@@ -949,7 +949,7 @@ with tab3:
                 color_discrete_map=REGION_COLORS,
                 orientation="h",
                 text="bar_label",
-                title=f"{CAT_LABELS[selected_cat]} — Hours by Person",
+                title="",
                 height=max(360, len(cat_tab) * 50),
                 custom_data=["pct_own", "Hours_fmt"],
             )
@@ -967,8 +967,9 @@ with tab3:
                 yaxis_title="",
                 showlegend=True,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                margin=dict(t=60, r=130, b=20, l=0),
+                margin=dict(t=40, r=130, b=20, l=0),
             )
+            st.markdown(f"**{CAT_LABELS[selected_cat]} — Hours by Person**")
             st.plotly_chart(fig_cat, width='stretch')
 
         with cr:
