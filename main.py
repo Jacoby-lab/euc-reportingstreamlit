@@ -141,7 +141,7 @@ def fetch_worklogs(week_start: str, week_end: str) -> pd.DataFrame:
     issues, start_at = [], 0
     while True:
         resp = requests.get(
-            f"{base_url}/rest/api/3/search",
+            f"{base_url}/rest/api/3/search/jql",
             auth=auth, headers=headers,
             params={
                 "jql":       jql,
