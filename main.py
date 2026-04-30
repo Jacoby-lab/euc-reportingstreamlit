@@ -738,32 +738,6 @@ with tab1:
             st.markdown("**Hours by Person — Stacked by Category**")
             st.plotly_chart(fig_stack, width='stretch')
 
-        # ── US vs MX comparison ──
-        if len(region_filter) > 1 and not search_query.strip():
-            st.divider()
-            st.markdown("#### US vs MX — Category Comparison")
-
-            reg_agg = fdf.groupby("Region")[active_cats].sum().reset_index()
-            reg_melt = reg_agg.melt(id_vars="Region", var_name="Category", value_name="Hours")
-            reg_melt["Hours_fmt"] = reg_melt["Hours"].apply(fh)
-
-            fig_reg = px.bar(
-                reg_melt,
-                x="Category", y="Hours",
-                color="Region",
-                barmode="group",
-                color_discrete_map=REGION_COLORS,
-                custom_data=["Region", "Hours_fmt"],
-            )
-            fig_reg.update_traces(
-                hovertemplate="<b>%{customdata[0]}</b> · %{x}<br>%{customdata[1]}<extra></extra>"
-            )
-            fig_reg.update_layout(
-                height=320,
-                margin=dict(t=10, b=20, l=0, r=0),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            )
-            st.plotly_chart(fig_reg, width='stretch')
 
 
 # ═══════════════════════════════════════════════════════════════════════════
