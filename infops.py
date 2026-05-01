@@ -939,6 +939,7 @@ with tab3:
             fig_cat.update_layout(
                 xaxis_title="Hours (decimal)",
                 yaxis_title="",
+                yaxis=dict(categoryorder="total ascending"),
                 showlegend=False,
                 margin=dict(t=40, r=130, b=20, l=0),
             )
@@ -969,6 +970,7 @@ with tab3:
                 xaxis_title="% of total hours",
                 xaxis_ticksuffix="%",
                 yaxis_title="",
+                yaxis=dict(categoryorder="total ascending"),
                 showlegend=False,
                 coloraxis_showscale=False,
                 margin=dict(t=40, r=60, b=20, l=0),
