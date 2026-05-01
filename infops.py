@@ -482,8 +482,8 @@ elif len(fdf) < len(df):
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────
-tab_dash, tab1, tab2, tab3, tab4 = st.tabs(
-    ["🏢 Dashboard", "📊 Overview", "👤 Individual", "🏷️ By Label", "📋 Full Table"]
+tab_dash, tab1, tab2, tab3 = st.tabs(
+    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "📋 Full Table"]
 )
 
 
@@ -773,104 +773,6 @@ with tab1:
             st.markdown("**Hours by Person — Stacked by Category**")
             st.plotly_chart(fig_stack, width='stretch')
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 2 · INDIVIDUAL
-# ═══════════════════════════════════════════════════════════════════════════
-with tab2:
-    if fdf.empty:
-        st.info("No members match the current filters.")
-
-    elif len(fdf) == 1:
-        row = fdf.iloc[0]
-        st.markdown(f"## {row['Name']}")
-        st.markdown(f"`{selected_group}` · {period_label}")
-
-        m1, m2, m3 = st.columns(3)
-        with m1:
-            st.metric("Total Hours", fh(row["Total"]))
-        with m2:
-            st.metric("Jira", fh(row["Jira"]))
-        with m3:
-            st.metric("TechConnect", fh(row["TC"]))
-
-        st.divider()
-
-        cat_vals = [row[c] for c in active_cats]
-        cat_df   = pd.DataFrame({"Category": active_cats, "Hours": cat_vals})
-        cat_df["Hours_fmt"] = cat_df["Hours"].apply(fh)
-        cat_df["pct"]       = (cat_df["Hours"] / (sum(cat_vals) or 1) * 100).round(1)
-
-        p1, p2 = st.columns(2)
-        with p1:
-            fig_p = px.pie(
-                cat_df, names="Category", values="Hours",
-                color="Category", color_discrete_map=CAT_COLORS,
-                hole=0.45,
-                custom_data=["Hours_fmt", "pct"],
-            )
-            fig_p.update_traces(
-                textinfo="percent+label",
-                hovertemplate="<b>%{label}</b><br>%{customdata[0]} (%{customdata[1]:.1f}%)<extra></extra>",
-            )
-            fig_p.update_layout(showlegend=False, height=360)
-            st.plotly_chart(fig_p, width='stretch')
-
-        with p2:
-            cat_sorted = cat_df.sort_values("Hours")
-            fig_b = px.bar(
-                cat_sorted,
-                x="Hours", y="Category",
-                color="Category", color_discrete_map=CAT_COLORS,
-                orientation="h",
-                text="Hours_fmt",
-                custom_data=["pct"],
-            )
-            fig_b.update_traces(
-                textposition="outside",
-                cliponaxis=False,
-                hovertemplate="%{y}: %{text} (%{customdata[0]:.1f}%)<extra></extra>",
-            )
-            fig_b.update_layout(
-                showlegend=False,
-                height=360,
-                xaxis_title="Hours (decimal)",
-                margin=dict(t=20, r=80),
-            )
-            st.plotly_chart(fig_b, width='stretch')
-
-    else:
-        st.markdown(f"**{len(fdf)} people** — sorted by total hours")
-
-        sort_order_asc = fdf.sort_values("Total", ascending=True)["Name"].tolist()
-        ind_melt = fdf.melt(
-            id_vars=["Name"],
-            value_vars=active_cats,
-            var_name="Category", value_name="Hours",
-        )
-        ind_melt["Hours_fmt"] = ind_melt["Hours"].apply(fh)
-
-        fig_ind = px.bar(
-            ind_melt,
-            y="Name", x="Hours",
-            color="Category",
-            color_discrete_map=CAT_COLORS,
-            orientation="h",
-            category_orders={"Name": sort_order_asc, "Category": active_cats},
-            height=max(420, len(fdf) * 44),
-            custom_data=["Hours_fmt"],
-        )
-        fig_ind.update_traces(
-            hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{customdata[0]}<extra></extra>"
-        )
-        fig_ind.update_layout(
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            margin=dict(t=40, b=10, l=0, r=0),
-            xaxis_title="Hours (decimal)",
-        )
-        st.markdown("**Hours by Individual — Stacked by Category**")
-        st.plotly_chart(fig_ind, width='stretch')
-
         st.divider()
         st.markdown("#### Member Cards")
 
@@ -893,9 +795,9 @@ with tab2:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TAB 3 · BY LABEL
+# TAB 2 · BY LABEL
 # ═══════════════════════════════════════════════════════════════════════════
-with tab3:
+with tab2:
     selected_cat = st.selectbox(
         "Work category",
         options=active_cats,
@@ -1023,9 +925,9 @@ with tab3:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TAB 4 · FULL TABLE
+# TAB 3 · FULL TABLE
 # ═══════════════════════════════════════════════════════════════════════════
-with tab4:
+with tab3:
     st.markdown(f"**{len(fdf)} members** · sorted by total hours")
 
     show_cols = ["Name", "Total", "Jira", "TC"] + active_cats
