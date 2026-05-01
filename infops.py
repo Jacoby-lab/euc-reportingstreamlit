@@ -80,27 +80,45 @@ GROUPS = OrderedDict([
     ("Identity", {
         "jira_keys": [],
         "tc_teams":  ["Identity Access Management"],
-        "members":   set(),  # populate when member list is known
+        "members": {
+            "Alexis Lopez Lopez",
+            "Scott Tarnell",
+        },
     }),
     ("Service Desk", {
         "jira_keys": ["IT"],
         "tc_teams":  ["Service Desk"],
-        "members":   set(),
+        "members": {
+            "George Loyola", "Jef Davis", "Nazir Latefe", "Noel Abraham",
+            "Paul Forte", "Taylor Johnson", "Tirth Patel", "Xavier Abaunza",
+        },
     }),
     ("Collaboration", {
         "jira_keys": ["COL"],
         "tc_teams":  ["Collaboration Technology"],
-        "members":   set(),
+        "members": {
+            "Kevin Maiberger",
+            "Scott Tarnell",
+            "Tim Mayville",
+        },
     }),
     ("Systems Engineering", {
         "jira_keys": ["SYS"],
         "tc_teams":  ["System Administration"],
-        "members":   set(),
+        "members": {
+            "Allen Neely", "Amar Rana", "Ambers Ferrara", "Areshkumar Venkatesan",
+            "Bianca Fialho", "Bijoy Babu", "Chris Dugas", "David Stratman",
+            "Gelila Wallace", "Gopinath Gopalam", "Jim Gardella", "Min Li",
+            "Satish Kothuru", "Shivendra Bajpai", "Tim Mayville", "Vishwas Gunjal",
+        },
     }),
     ("Network Services", {
         "jira_keys": ["NET"],
         "tc_teams":  ["Network Administration"],
-        "members":   set(),
+        "members": {
+            "Brian Graham", "David Fuentes", "Kailash Mohnani",
+            "Mukesh Kumar", "Shaurya Katiyar",
+        },
     }),
 ])
 
