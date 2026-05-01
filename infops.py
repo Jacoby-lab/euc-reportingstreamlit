@@ -266,11 +266,13 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
 
     jira_keys   = set(cfg.get("jira_keys", []))
     authors_str = ", ".join(f'"{m}"' for m in members)
-    # worklogDate JQL is unreliable for older ranges in Jira Cloud (index gaps).
-    # updated >= date_start is always indexed; _extract_rows filters by exact date.
+    # worklogDate is unreliable for older ranges (Jira Cloud index gaps).
+    # updated >= date_start catches active tickets but misses retroactive worklogs on
+    # closed/old tickets (e.g. JSM tickets closed before date_start).
+    # OR combination catches both cases; _extract_rows filters exact date range.
     jql = (
         f'worklogAuthor in ({authors_str}) '
-        f'AND updated >= "{date_start}"'
+        f'AND (worklogDate >= "{date_start}" OR updated >= "{date_start}")'
     )
     issues = _paginate_issues(base_url, auth, headers, jql)
     rows   = _extract_rows(issues, base_url, auth, headers, date_start, date_end, members, jira_keys)
