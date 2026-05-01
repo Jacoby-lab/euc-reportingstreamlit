@@ -60,8 +60,12 @@ SOURCE_COLORS = {"Jira": "#3B82F6", "TC": "#10B981"}
 #   Leave empty/omit to include all authors found in those projects.
 GROUPS = OrderedDict([
     ("End User Computing", {
+        # jira_keys: core EUC projects (KTLO/Initiative/Tech Debt default category)
         "jira_keys": ["EUC", "ID"],
-        "tc_teams":  ["End User Computing", "End User Computing Mexico"],
+        # tc_teams: not used for EUC — cross_projects replaces it for broader coverage
+        "tc_teams":  [],
+        # cross_projects: all other projects EUC members may log time in (TC source)
+        "cross_projects": ["TC", "IT", "COL", "SYS", "NET"],
         "members": {
             "Nick Shelton", "Jake Snodgrass", "Matthew Davis", "Khai Nguyen",
             "Justin Pham", "Nicholas Bowling", "Wes Hurd", "Kenneth Calvert",
@@ -238,6 +242,19 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
             f'project = "TC" '
             f'AND "{tc_team_field}" in ({teams_str}) '
             f'AND updated >= "{lookback}"'
+        )
+        issues = _paginate_issues(base_url, auth, headers, jql)
+        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req", members))
+
+    # cross_projects: additional projects where members may log cross-team time (e.g. EUC members on TC/IT/COL/etc.)
+    # Fetched with worklogDate filter; member allowlist keeps only this group's contributors.
+    cross = cfg.get("cross_projects", [])
+    if cross and members:
+        proj_str = ", ".join(f'"{k}"' for k in cross)
+        jql = (
+            f'project in ({proj_str}) '
+            f'AND worklogDate >= "{date_start}" '
+            f'AND worklogDate <= "{date_end}"'
         )
         issues = _paginate_issues(base_url, auth, headers, jql)
         rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req", members))
