@@ -1169,7 +1169,11 @@ with tab_sprint:
             [
                 s for s in all_sprints
                 if (not _prefix or s["name"].startswith(_prefix))
-                and s.get("endDate", "")[:4] == "2026"
+                and (
+                    s.get("startDate", "")[:4] == "2026"
+                    or s.get("endDate", "")[:4] == "2026"
+                    or s.get("state") == "active"
+                )
             ],
             key=lambda s: s.get("startDate", ""),
             reverse=True,
