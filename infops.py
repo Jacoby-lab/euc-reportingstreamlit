@@ -1165,11 +1165,15 @@ with tab_sprint:
         )
     else:
         _prefix = GROUPS[selected_group].get("sprint_prefix", "")
-        _filtered_sprints = [
-            s for s in all_sprints
-            if (not _prefix or s["name"].startswith(_prefix))
-            and s.get("endDate", "")[:4] == "2026"
-        ]
+        _filtered_sprints = sorted(
+            [
+                s for s in all_sprints
+                if (not _prefix or s["name"].startswith(_prefix))
+                and s.get("endDate", "")[:4] == "2026"
+            ],
+            key=lambda s: s.get("startDate", ""),
+            reverse=True,
+        )
 
         if not _filtered_sprints:
             st.info(f"No 2026 sprints found with prefix '{_prefix}' for this group.")
