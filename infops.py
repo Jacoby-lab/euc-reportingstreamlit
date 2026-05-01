@@ -84,6 +84,7 @@ GROUPS = OrderedDict([
         "tc_teams":  [],
         # cross_projects: all other projects EUC members may log time in (TC source)
         "cross_projects": ["TC", "IT", "COL", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
+        "sprint_prefix": "EUC",
         "members": {
             "Nick Shelton", "Jake Snodgrass", "Matthew Davis", "Khai Nguyen",
             "Justin Pham", "Nicholas Bowling", "Wes Hurd", "Kenneth Calvert",
@@ -99,6 +100,7 @@ GROUPS = OrderedDict([
         "jira_keys":      ["ID"],
         "tc_teams":       [],
         "cross_projects": ["EUC", "TC", "IT", "COL", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
+        "sprint_prefix":  "ID",
         "members": {
             "Alexis Lopez Lopez",
             "Scott Tarnell",
@@ -108,6 +110,7 @@ GROUPS = OrderedDict([
         "jira_keys":      ["IT"],
         "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "COL", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
+        "sprint_prefix":  "IT",
         "members": {
             "George Loyola", "Jef Davis", "Nazir Latefe", "Noel Abraham",
             "Paul Forte", "Taylor Johnson", "Tirth Patel", "Xavier Abaunza",
@@ -117,6 +120,7 @@ GROUPS = OrderedDict([
         "jira_keys":      ["COL"],
         "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "IT", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
+        "sprint_prefix":  "COL",
         "members": {
             "Kevin Maiberger",
             "Scott Tarnell",
@@ -127,6 +131,7 @@ GROUPS = OrderedDict([
         "jira_keys":      ["SYS"],
         "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
+        "sprint_prefix":  "SYS",
         "members": {
             "Allen Neely", "Amar Rana", "Ambers Ferrara", "Areshkumar Venkatesan",
             "Bianca Fialho", "Bijoy Babu", "Chris Dugas", "David Stratman",
@@ -138,6 +143,7 @@ GROUPS = OrderedDict([
         "jira_keys":      ["NET"],
         "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "SYS", "ITPP", "ITDS", "IOAI", "SDI"],
+        "sprint_prefix":  "NET",
         "members": {
             "Brian Graham", "David Fuentes", "Kailash Mohnani",
             "Mukesh Kumar", "Shaurya Katiyar",
@@ -1158,31 +1164,43 @@ with tab_sprint:
             "Ensure the Jira project has a Scrum board and the API user has access."
         )
     else:
-        _STATE_BADGE = {"active": "🟢", "closed": "⚫", "future": "🔵"}
-        sprint_options = {
-            s["id"]: (
-                f"{_STATE_BADGE.get(s.get('state',''), '')} {s['name']}"
-                + (f"  ({s['startDate'][:10]} → {s['endDate'][:10]})" if s.get("startDate") else "")
-            )
-            for s in all_sprints
-        }
-        _default = [all_sprints[0]["id"]] if all_sprints else []
-        selected_sprint_ids = st.multiselect(
-            "Select Sprint(s)",
-            options=list(sprint_options.keys()),
-            format_func=lambda x: sprint_options[x],
-            default=_default,
-        )
+        _prefix = GROUPS[selected_group].get("sprint_prefix", "")
+        _filtered_sprints = [
+            s for s in all_sprints
+            if (not _prefix or s["name"].startswith(_prefix))
+            and s.get("endDate", "")[:4] == "2026"
+        ]
 
-        if not selected_sprint_ids:
-            st.info("Select at least one sprint above.")
+        if not _filtered_sprints:
+            st.info(f"No 2026 sprints found with prefix '{_prefix}' for this group.")
         else:
-            with st.spinner("Loading sprint issues and worklogs…"):
-                sdf = fetch_sprint_issues(tuple(selected_sprint_ids), selected_group)
+            _STATE_BADGE = {"active": "🟢", "closed": "⚫", "future": "🔵"}
+            sprint_options = {
+                s["id"]: (
+                    f"{_STATE_BADGE.get(s.get('state',''), '')} {s['name']}"
+                    + (f"  ({s['startDate'][:10]} → {s['endDate'][:10]})" if s.get("startDate") else "")
+                )
+                for s in _filtered_sprints
+            }
+            _active_ids = [s["id"] for s in _filtered_sprints if s.get("state") == "active"]
+            _default    = _active_ids if _active_ids else [_filtered_sprints[0]["id"]]
+            selected_sprint_ids = st.multiselect(
+                "Select Sprint(s)",
+                options=list(sprint_options.keys()),
+                format_func=lambda x: sprint_options[x],
+                default=_default,
+            )
 
-            if sdf.empty:
-                st.warning("No members from this group have logged time on the selected sprint(s).")
+            sdf = pd.DataFrame()
+            if not selected_sprint_ids:
+                st.info("Select at least one sprint above.")
             else:
+                with st.spinner("Loading sprint issues and worklogs…"):
+                    sdf = fetch_sprint_issues(tuple(selected_sprint_ids), selected_group)
+                if sdf.empty:
+                    st.warning("No members from this group have logged time on the selected sprint(s).")
+
+            if not sdf.empty:
                 # ── Member-level aggregation ──────────────────────────────
                 mem = (
                     sdf.groupby("member")
