@@ -78,24 +78,27 @@ GROUPS = OrderedDict([
         },
     }),
     ("Identity", {
-        "jira_keys": [],
-        "tc_teams":  ["Identity Access Management"],
+        "jira_keys":      ["ID"],
+        "tc_teams":       ["Identity Access Management"],
+        "cross_projects": ["EUC", "TC", "IT", "COL", "SYS", "NET"],
         "members": {
             "Alexis Lopez Lopez",
             "Scott Tarnell",
         },
     }),
     ("Service Desk", {
-        "jira_keys": ["IT"],
-        "tc_teams":  ["Service Desk"],
+        "jira_keys":      ["IT"],
+        "tc_teams":       ["Service Desk"],
+        "cross_projects": ["EUC", "ID", "TC", "COL", "SYS", "NET"],
         "members": {
             "George Loyola", "Jef Davis", "Nazir Latefe", "Noel Abraham",
             "Paul Forte", "Taylor Johnson", "Tirth Patel", "Xavier Abaunza",
         },
     }),
     ("Collaboration", {
-        "jira_keys": ["COL"],
-        "tc_teams":  ["Collaboration Technology"],
+        "jira_keys":      ["COL"],
+        "tc_teams":       ["Collaboration Technology"],
+        "cross_projects": ["EUC", "ID", "TC", "IT", "SYS", "NET"],
         "members": {
             "Kevin Maiberger",
             "Scott Tarnell",
@@ -103,8 +106,9 @@ GROUPS = OrderedDict([
         },
     }),
     ("Systems Engineering", {
-        "jira_keys": ["SYS"],
-        "tc_teams":  ["System Administration"],
+        "jira_keys":      ["SYS"],
+        "tc_teams":       ["System Administration"],
+        "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "NET"],
         "members": {
             "Allen Neely", "Amar Rana", "Ambers Ferrara", "Areshkumar Venkatesan",
             "Bianca Fialho", "Bijoy Babu", "Chris Dugas", "David Stratman",
@@ -113,8 +117,9 @@ GROUPS = OrderedDict([
         },
     }),
     ("Network Services", {
-        "jira_keys": ["NET"],
-        "tc_teams":  ["Network Administration"],
+        "jira_keys":      ["NET"],
+        "tc_teams":       ["Network Administration"],
+        "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "SYS"],
         "members": {
             "Brian Graham", "David Fuentes", "Kailash Mohnani",
             "Mukesh Kumar", "Shaurya Katiyar",
