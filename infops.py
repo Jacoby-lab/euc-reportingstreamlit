@@ -455,6 +455,9 @@ with st.sidebar:
         placeholder="Select team members…",
     )
     st.divider()
+    if st.button("🔄 Clear cache", help="Force re-fetch from Jira (use if data looks stale)"):
+        fetch_worklogs.clear()
+        st.rerun()
     st.caption(f"I&O · {selected_group} · refreshes hourly")
 
 
