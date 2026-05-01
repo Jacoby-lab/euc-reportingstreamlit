@@ -469,6 +469,20 @@ fdf = df[df["Name"].isin(selected_names)].copy() if selected_names and not df.em
 fdf["_display_total"] = fdf["Total"]
 active_cats = CATEGORIES
 
+# ── Expected hours target line ─────────────────────────────────────────────
+# 6h/day × weekdays elapsed (capped at date_end so future days don't count)
+def _count_weekdays(start, end):
+    count, d = 0, start
+    while d <= end:
+        if d.weekday() < 5:
+            count += 1
+        d += timedelta(days=1)
+    return count
+
+_eff_end       = min(date_end, _today)
+_expected_days = _count_weekdays(date_start, _eff_end)
+expected_hours = _expected_days * 6
+
 _raw_filtered = _raw[_raw["Name"].isin(selected_names)] if selected_names and not _raw.empty else _raw
 
 
@@ -777,6 +791,17 @@ with tab1:
                 height=380,
                 margin=dict(t=40, b=80, l=0, r=0),
             )
+            if expected_hours > 0:
+                fig_stack.add_hline(
+                    y=expected_hours,
+                    line_dash="dash",
+                    line_color="rgba(255,255,255,0.45)",
+                    line_width=1.5,
+                    annotation_text=f"Target {fh(expected_hours)}",
+                    annotation_position="top right",
+                    annotation_font_size=11,
+                    annotation_font_color="rgba(255,255,255,0.6)",
+                )
             st.markdown("**Hours by Person — Stacked by Category**")
             st.plotly_chart(fig_stack, width='stretch')
 
