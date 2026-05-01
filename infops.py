@@ -946,42 +946,34 @@ with tab3:
             st.plotly_chart(fig_cat, width='stretch')
 
         with cr:
-            # Source breakdown pie (Jira vs TC)
-            if not _raw_filtered.empty:
-                src_cat_data = (
-                    _raw_filtered[_raw_filtered["category"] == selected_cat]
-                    .groupby("source")["hours"].sum()
-                    .reset_index()
-                )
-                if not src_cat_data.empty:
-                    src_cat_data.columns = ["Source", "Hours"]
-                    src_cat_data["Hours_fmt"] = src_cat_data["Hours"].apply(fh)
-                    fig_src = px.pie(
-                        src_cat_data,
-                        names="Source", values="Hours",
-                        color="Source", color_discrete_map=SOURCE_COLORS,
-                        hole=0.45,
-                        title="By Source",
-                        custom_data=["Hours_fmt"],
-                    )
-                    fig_src.update_traces(
-                        textinfo="percent+label",
-                        hovertemplate="<b>%{label}</b><br>%{customdata[0]}<extra></extra>",
-                    )
-                    fig_src.update_layout(
-                        showlegend=False,
-                        height=260,
-                        margin=dict(t=40, b=0, l=0, r=0),
-                    )
-                    st.plotly_chart(fig_src, width='stretch')
-
-            st.markdown("**Top contributors**")
-            for _, r in cat_tab.head(5).iterrows():
-                st.markdown(
-                    f"**{r['Name']}**  \n"
-                    f"{fh(r[selected_cat])} · {r['pct_own']:.0f}% of their period"
-                )
-                st.markdown("")
+            # % of workload chart — what share of each person's total hours is this category
+            pct_df = cat_tab[["Name", "pct_own", selected_cat]].sort_values("pct_own", ascending=True).copy()
+            pct_df["Hours_fmt"] = pct_df[selected_cat].apply(fh)
+            fig_pct = px.bar(
+                pct_df,
+                x="pct_own", y="Name",
+                orientation="h",
+                text=pct_df["pct_own"].apply(lambda v: f"{v:.0f}%"),
+                color="pct_own",
+                color_continuous_scale=["#3B82F6", CAT_COLORS.get(selected_cat, "#F59E0B")],
+                custom_data=["Hours_fmt"],
+                title="% of Their Workload",
+                height=max(360, len(cat_tab) * 50),
+            )
+            fig_pct.update_traces(
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>%{customdata[0]} · %{x:.1f}% of period<extra></extra>",
+            )
+            fig_pct.update_layout(
+                xaxis_title="% of total hours",
+                xaxis_ticksuffix="%",
+                yaxis_title="",
+                showlegend=False,
+                coloraxis_showscale=False,
+                margin=dict(t=40, r=60, b=20, l=0),
+            )
+            st.plotly_chart(fig_pct, width='stretch')
 
 
 # ═══════════════════════════════════════════════════════════════════════════
