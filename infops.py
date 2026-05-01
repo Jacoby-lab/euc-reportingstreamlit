@@ -190,12 +190,16 @@ def _paginate_issues(base_url, auth, headers, jql):
     return issues
 
 
-def _extract_rows(issues, base_url, auth, headers, date_start, date_end, source, default_cat, members=None):
+def _extract_rows(issues, base_url, auth, headers, date_start, date_end, members, jira_keys):
+    """Extract worklog rows; source derived from project key vs jira_keys set."""
     rows = []
     for issue in issues:
-        fields     = issue["fields"]
-        raw_labels = [lb.lower() for lb in fields.get("labels", [])]
-        category   = next(
+        fields      = issue["fields"]
+        project_key = fields["project"]["key"]
+        source      = "Jira" if project_key in jira_keys else "TC"
+        default_cat = "KTLO" if source == "Jira" else "Svc Req"
+        raw_labels  = [lb.lower() for lb in fields.get("labels", [])]
+        category    = next(
             (LABEL_TO_CAT[lb] for lb in raw_labels if lb in LABEL_TO_CAT),
             default_cat,
         )
@@ -228,12 +232,11 @@ def _extract_rows(issues, base_url, auth, headers, date_start, date_end, source,
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFrame:
-    """Pull worklogs for the selected I&O group from Jira projects + TC JSM teams."""
+    """Pull worklogs for the selected I&O group using worklogAuthor across all projects."""
     try:
-        base_url      = st.secrets["jira"]["base_url"].rstrip("/")
-        email         = st.secrets["jira"]["email"]
-        token         = st.secrets["jira"]["api_token"]
-        tc_team_field = st.secrets["jira"].get("tc_team_field", "Assigned Group")
+        base_url = st.secrets["jira"]["base_url"].rstrip("/")
+        email    = st.secrets["jira"]["email"]
+        token    = st.secrets["jira"]["api_token"]
     except KeyError as e:
         st.error(f"Missing Jira secret: {e}. Check Settings → Secrets.")
         return pd.DataFrame()
@@ -241,48 +244,23 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
     auth    = (email, token)
     headers = {"Accept": "application/json"}
     cfg     = GROUPS[group_name]
-    members = cfg.get("members") or None  # None = no filter; empty set treated as None
-    rows    = []
-
-    # Jira project tickets (KTLO/Initiative/Tech Debt by default)
-    if cfg["jira_keys"]:
-        proj_str = ", ".join(f'"{k}"' for k in cfg["jira_keys"])
-        jql = (
-            f'project in ({proj_str}) '
-            f'AND worklogDate >= "{date_start}" '
-            f'AND worklogDate <= "{date_end}"'
-        )
-        issues = _paginate_issues(base_url, auth, headers, jql)
-        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "Jira", "KTLO", members))
-
-    # TC / JSM tickets filtered by team (Svc Req/Incident by default).
-    # worklogDate is NOT used here — combining it with custom field filters returns 0 in some Jira instances.
-    # Use updated >= 30 days before date_start to cast a wide net; date filtering happens in _extract_rows.
-    if cfg["tc_teams"]:
-        teams_str  = ", ".join(f'"{t}"' for t in cfg["tc_teams"])
-        lookback   = (date.fromisoformat(date_start) - timedelta(days=30)).strftime("%Y-%m-%d")
-        jql = (
-            f'project = "TC" '
-            f'AND "{tc_team_field}" in ({teams_str}) '
-            f'AND updated >= "{lookback}"'
-        )
-        issues = _paginate_issues(base_url, auth, headers, jql)
-        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req", members))
-
-    # cross_projects: additional projects where members may log cross-team time (e.g. EUC members on TC/IT/COL/etc.)
-    # Fetched with worklogDate filter; member allowlist keeps only this group's contributors.
-    cross = cfg.get("cross_projects", [])
-    if cross and members:
-        proj_str = ", ".join(f'"{k}"' for k in cross)
-        jql = (
-            f'project in ({proj_str}) '
-            f'AND worklogDate >= "{date_start}" '
-            f'AND worklogDate <= "{date_end}"'
-        )
-        issues = _paginate_issues(base_url, auth, headers, jql)
-        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req", members))
+    members = cfg.get("members") or None
 
     empty_cols = ["Name", "source", "category", "hours", "date", "issue"]
+    if not members:
+        st.warning(f"No members configured for {group_name}.")
+        return pd.DataFrame(columns=empty_cols)
+
+    jira_keys   = set(cfg.get("jira_keys", []))
+    authors_str = ", ".join(f'"{m}"' for m in members)
+    jql = (
+        f'worklogAuthor in ({authors_str}) '
+        f'AND worklogDate >= "{date_start}" '
+        f'AND worklogDate <= "{date_end}"'
+    )
+    issues = _paginate_issues(base_url, auth, headers, jql)
+    rows   = _extract_rows(issues, base_url, auth, headers, date_start, date_end, members, jira_keys)
+
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
 
 
