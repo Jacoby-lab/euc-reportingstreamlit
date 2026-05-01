@@ -28,6 +28,16 @@ st.markdown("""
         padding: 14px 16px;
         margin-bottom: 12px;
         background: #0d1117;
+        color: #e6edf3;
+    }
+    @media (prefers-color-scheme: light) {
+        .member-card {
+            background: #f6f8fa;
+            border: 1px solid #d0d7de;
+            color: #1f2328;
+        }
+        .member-card .card-sub  { color: #57606a !important; }
+        .member-card .card-badge { background: #e8ecf0 !important; color: #57606a !important; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -829,10 +839,10 @@ with tab2:
 <div class="member-card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
     <strong style="font-size:0.9rem">{r['Name']}</strong>
-    <span style="background:#1f2937;color:#9ca3af;border-radius:4px;padding:2px 8px;font-size:0.75rem">{selected_group}</span>
+    <span class="card-badge" style="background:#1f2937;color:#9ca3af;border-radius:4px;padding:2px 8px;font-size:0.75rem">{selected_group}</span>
   </div>
   <div style="font-size:1.35rem;font-weight:700;margin-bottom:4px">{fh(r['Total'])}</div>
-  <div style="color:#6b7280;font-size:0.8rem;margin-bottom:8px">Jira {fh(r['Jira'])} &nbsp;·&nbsp; TC {fh(r['TC'])}</div>
+  <div class="card-sub" style="color:#9ca3af;font-size:0.8rem;margin-bottom:8px">Jira {fh(r['Jira'])} &nbsp;·&nbsp; TC {fh(r['TC'])}</div>
   <div style="font-size:0.82rem;color:{CAT_COLORS.get(dominant,'#fff')}">▶ {dominant}: {fh(r[dominant])} ({pct_dom:.0f}%)</div>
 </div>
 """, unsafe_allow_html=True)
