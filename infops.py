@@ -285,6 +285,146 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
 
 
+# ── Sprint fetch helpers ──────────────────────────────────────────────────
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_sprints_for_group(group_name: str) -> list:
+    """Return [{id, name, state, startDate, endDate}] newest-first for group's boards."""
+    try:
+        base_url = st.secrets["jira"]["base_url"].rstrip("/")
+        email    = st.secrets["jira"]["email"]
+        token    = st.secrets["jira"]["api_token"]
+    except KeyError:
+        return []
+    auth    = (email, token)
+    headers = {"Accept": "application/json"}
+    jira_keys = GROUPS[group_name].get("jira_keys", [])
+
+    board_ids = set()
+    for key in jira_keys:
+        r = requests.get(
+            f"{base_url}/rest/agile/1.0/board",
+            auth=auth, headers=headers,
+            params={"projectKeyOrId": key, "maxResults": 50}, timeout=15,
+        )
+        if r.ok:
+            for b in r.json().get("values", []):
+                board_ids.add(b["id"])
+
+    sprints, seen = [], set()
+    for board_id in board_ids:
+        start = 0
+        while True:
+            r = requests.get(
+                f"{base_url}/rest/agile/1.0/board/{board_id}/sprint",
+                auth=auth, headers=headers,
+                params={"state": "active,closed,future", "startAt": start, "maxResults": 50},
+                timeout=15,
+            )
+            if not r.ok:
+                break
+            data = r.json()
+            for s in data.get("values", []):
+                if s["id"] not in seen:
+                    seen.add(s["id"])
+                    sprints.append(s)
+            if data.get("isLast", True):
+                break
+            start += 50
+
+    sprints.sort(key=lambda s: s.get("startDate", ""), reverse=True)
+    return sprints
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
+    """
+    Return DataFrame with per-(issue, member) rows:
+    sprint, issue_key, summary, assignee, estimate_h, logged_h, member, status
+    estimate_h is set only on the row where member == assignee.
+    """
+    try:
+        base_url = st.secrets["jira"]["base_url"].rstrip("/")
+        email    = st.secrets["jira"]["email"]
+        token    = st.secrets["jira"]["api_token"]
+    except KeyError:
+        return pd.DataFrame()
+    auth    = (email, token)
+    headers = {"Accept": "application/json"}
+    members = set(GROUPS[group_name].get("members", []))
+    cols    = ["sprint", "issue_key", "summary", "assignee", "estimate_h", "logged_h", "member", "status"]
+
+    rows = []
+    for sprint_id in sprint_ids:
+        sr = requests.get(
+            f"{base_url}/rest/agile/1.0/sprint/{sprint_id}",
+            auth=auth, headers=headers, timeout=15,
+        )
+        sprint_name = sr.json().get("name", str(sprint_id)) if sr.ok else str(sprint_id)
+
+        start = 0
+        while True:
+            r = requests.get(
+                f"{base_url}/rest/agile/1.0/sprint/{sprint_id}/issue",
+                auth=auth, headers=headers,
+                params={
+                    "startAt": start, "maxResults": 100,
+                    "fields": "summary,assignee,timeoriginalestimate,worklog,status,issuetype",
+                }, timeout=30,
+            )
+            if not r.ok:
+                break
+            data   = r.json()
+            issues = data.get("issues", [])
+
+            for issue in issues:
+                f         = issue["fields"]
+                ikey      = issue["key"]
+                assignee  = (f.get("assignee") or {}).get("displayName", "Unassigned")
+                est_h     = (f.get("timeoriginalestimate") or 0) / 3600
+                status    = (f.get("status") or {}).get("name", "")
+                summary   = f.get("summary", "")
+
+                wl_data  = f.get("worklog", {})
+                worklogs = wl_data.get("worklogs", [])
+                if wl_data.get("total", 0) > len(worklogs):
+                    wr = requests.get(
+                        f"{base_url}/rest/api/3/issue/{ikey}/worklog",
+                        auth=auth, headers=headers, timeout=30,
+                    )
+                    if wr.ok:
+                        worklogs = wr.json().get("worklogs", [])
+
+                member_logged: dict = {}
+                for wl in worklogs:
+                    author = wl["author"]["displayName"]
+                    if members and author not in members:
+                        continue
+                    member_logged[author] = member_logged.get(author, 0) + wl["timeSpentSeconds"] / 3600
+
+                all_on_issue = set(member_logged.keys())
+                if assignee in members:
+                    all_on_issue.add(assignee)
+
+                for member in all_on_issue:
+                    rows.append({
+                        "sprint":     sprint_name,
+                        "issue_key":  ikey,
+                        "summary":    summary,
+                        "assignee":   assignee,
+                        "estimate_h": est_h if member == assignee else 0,
+                        "logged_h":   member_logged.get(member, 0),
+                        "member":     member,
+                        "status":     status,
+                    })
+
+            start += len(issues)
+            if start >= data.get("total", 0) or not issues:
+                break
+
+    return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
+
+
 def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
     """Aggregate raw worklog rows into per-person summary."""
     src_cols = ["Jira", "TC"]
@@ -508,8 +648,8 @@ elif len(fdf) < len(df):
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────
-tab_dash, tab1, tab2, tab3 = st.tabs(
-    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "📋 Full Table"]
+tab_dash, tab1, tab2, tab3, tab_sprint = st.tabs(
+    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "📋 Full Table", "🏃 Sprint"]
 )
 
 
@@ -1003,3 +1143,190 @@ with tab3:
         file_name=f"IO_{selected_group.replace(' ', '_')}_{period_code.replace('–', '_')}.csv",
         mime="text/csv",
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAB 4 · SPRINT
+# ═══════════════════════════════════════════════════════════════════════════
+with tab_sprint:
+    with st.spinner("Loading sprints…"):
+        all_sprints = fetch_sprints_for_group(selected_group)
+
+    if not all_sprints:
+        st.info(
+            "No sprints found for this group. "
+            "Ensure the Jira project has a Scrum board and the API user has access."
+        )
+    else:
+        _STATE_BADGE = {"active": "🟢", "closed": "⚫", "future": "🔵"}
+        sprint_options = {
+            s["id"]: (
+                f"{_STATE_BADGE.get(s.get('state',''), '')} {s['name']}"
+                + (f"  ({s['startDate'][:10]} → {s['endDate'][:10]})" if s.get("startDate") else "")
+            )
+            for s in all_sprints
+        }
+        _default = [all_sprints[0]["id"]] if all_sprints else []
+        selected_sprint_ids = st.multiselect(
+            "Select Sprint(s)",
+            options=list(sprint_options.keys()),
+            format_func=lambda x: sprint_options[x],
+            default=_default,
+        )
+
+        if not selected_sprint_ids:
+            st.info("Select at least one sprint above.")
+        else:
+            with st.spinner("Loading sprint issues and worklogs…"):
+                sdf = fetch_sprint_issues(tuple(selected_sprint_ids), selected_group)
+
+            if sdf.empty:
+                st.warning("No members from this group have logged time on the selected sprint(s).")
+            else:
+                # ── Member-level aggregation ──────────────────────────────
+                mem = (
+                    sdf.groupby("member")
+                    .agg(estimated=("estimate_h", "sum"), logged=("logged_h", "sum"), stories=("issue_key", "nunique"))
+                    .reset_index()
+                )
+                mem["variance"] = mem["logged"] - mem["estimated"]
+                mem = mem.sort_values("logged", ascending=False)
+
+                tot_est      = mem["estimated"].sum()
+                tot_log      = mem["logged"].sum()
+                tot_var      = tot_log - tot_est
+                tot_stories  = sdf["issue_key"].nunique()
+                var_sign     = "+" if tot_var >= 0 else ""
+
+                # ── Summary metrics ───────────────────────────────────────
+                c0, c1, c2, c3 = st.columns(4)
+                c0.metric("Sprint Stories", tot_stories)
+                c1.metric("Total Estimated", fh(tot_est))
+                c2.metric("Total Logged",    fh(tot_log))
+                c3.metric("Variance", f"{var_sign}{fh(tot_var)}")
+
+                st.divider()
+
+                # ── Grouped horizontal bar: estimated vs logged ───────────
+                bar_melt = mem[["member", "estimated", "logged"]].melt(
+                    id_vars="member", var_name="Type", value_name="Hours"
+                )
+                bar_melt["Hours_fmt"] = bar_melt["Hours"].apply(fh)
+                sort_names = mem["member"].tolist()
+
+                fig_bar = px.bar(
+                    bar_melt,
+                    x="Hours", y="member",
+                    color="Type",
+                    barmode="group",
+                    orientation="h",
+                    category_orders={"member": sort_names[::-1], "Type": ["estimated", "logged"]},
+                    color_discrete_map={"estimated": "#3b82f6", "logged": "#10b981"},
+                    custom_data=["Hours_fmt"],
+                    labels={"Hours": "Hours (decimal)", "member": ""},
+                    title="Estimated vs Logged Hours by Member",
+                )
+                fig_bar.update_traces(
+                    hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{customdata[0]}<extra></extra>"
+                )
+                fig_bar.update_layout(
+                    height=max(350, len(sort_names) * 50 + 120),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    margin=dict(t=60, b=20, l=0, r=20),
+                )
+                st.plotly_chart(fig_bar, width='stretch')
+
+                # ── Bottom row: scatter (accuracy) + variance bar ─────────
+                left, right = st.columns(2)
+
+                with left:
+                    _max = max(float(mem[["estimated", "logged"]].max().max()) * 1.15, 10)
+                    fig_sc = px.scatter(
+                        mem,
+                        x="estimated", y="logged",
+                        text="member",
+                        size="stories",
+                        size_max=30,
+                        color="variance",
+                        color_continuous_scale=["#ef4444", "#f59e0b", "#10b981"],
+                        range_color=[-15, 15],
+                        title="Accuracy — Estimated vs Logged",
+                        labels={"estimated": "Estimated (h)", "logged": "Logged (h)", "variance": "Variance (h)"},
+                        custom_data=["member", "stories"],
+                    )
+                    fig_sc.add_shape(
+                        type="line", x0=0, y0=0, x1=_max, y1=_max,
+                        line=dict(color="rgba(255,255,255,0.25)", dash="dash", width=1),
+                    )
+                    fig_sc.update_traces(
+                        textposition="top center",
+                        hovertemplate=(
+                            "<b>%{customdata[0]}</b><br>"
+                            "Estimated: %{x:.1f}h<br>"
+                            "Logged: %{y:.1f}h<br>"
+                            "Stories: %{customdata[1]}<extra></extra>"
+                        ),
+                    )
+                    fig_sc.update_layout(
+                        height=380,
+                        showlegend=False,
+                        coloraxis_showscale=False,
+                        margin=dict(t=40, b=20, l=0, r=20),
+                        xaxis=dict(range=[0, _max]),
+                        yaxis=dict(range=[0, _max]),
+                    )
+                    st.plotly_chart(fig_sc, width='stretch')
+
+                with right:
+                    mem_var = mem.copy()
+                    mem_var["var_fmt"] = mem_var["variance"].apply(
+                        lambda v: f"+{fh(v)}" if v >= 0 else f"-{fh(abs(v))}"
+                    )
+                    fig_var = px.bar(
+                        mem_var.sort_values("variance"),
+                        x="variance", y="member",
+                        orientation="h",
+                        color="variance",
+                        color_continuous_scale=["#ef4444", "#f59e0b", "#10b981"],
+                        range_color=[-15, 15],
+                        title="Variance per Member (Logged − Estimated)",
+                        labels={"variance": "Variance (h)", "member": ""},
+                        custom_data=["var_fmt"],
+                    )
+                    fig_var.add_vline(
+                        x=0,
+                        line_color="rgba(255,255,255,0.35)",
+                        line_dash="dash",
+                        line_width=1,
+                    )
+                    fig_var.update_traces(
+                        hovertemplate="<b>%{y}</b><br>Variance: %{customdata[0]}<extra></extra>"
+                    )
+                    fig_var.update_layout(
+                        height=380,
+                        showlegend=False,
+                        coloraxis_showscale=False,
+                        margin=dict(t=40, b=20, l=0, r=20),
+                    )
+                    st.plotly_chart(fig_var, width='stretch')
+
+                # ── Story detail expander ─────────────────────────────────
+                with st.expander("📋 Story Detail", expanded=False):
+                    detail = sdf[sdf["logged_h"] > 0].copy()
+                    detail["Estimate"] = detail["estimate_h"].apply(fh)
+                    detail["Logged"]   = detail["logged_h"].apply(fh)
+                    st.dataframe(
+                        detail[["sprint", "issue_key", "summary", "member", "assignee", "Estimate", "Logged", "status"]],
+                        use_container_width=True,
+                        column_config={
+                            "sprint":     "Sprint",
+                            "issue_key":  "Issue",
+                            "summary":    st.column_config.TextColumn("Summary", width="large"),
+                            "member":     "Member",
+                            "assignee":   "Assignee",
+                            "Estimate":   "Estimate",
+                            "Logged":     "Logged",
+                            "status":     "Status",
+                        },
+                        hide_index=True,
+                    )
