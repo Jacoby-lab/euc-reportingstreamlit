@@ -79,7 +79,7 @@ GROUPS = OrderedDict([
     }),
     ("Identity", {
         "jira_keys":      ["ID"],
-        "tc_teams":       ["Identity Access Management"],
+        "tc_teams":       [],
         "cross_projects": ["EUC", "TC", "IT", "COL", "SYS", "NET"],
         "members": {
             "Alexis Lopez Lopez",
@@ -88,7 +88,7 @@ GROUPS = OrderedDict([
     }),
     ("Service Desk", {
         "jira_keys":      ["IT"],
-        "tc_teams":       ["Service Desk"],
+        "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "COL", "SYS", "NET"],
         "members": {
             "George Loyola", "Jef Davis", "Nazir Latefe", "Noel Abraham",
@@ -97,7 +97,7 @@ GROUPS = OrderedDict([
     }),
     ("Collaboration", {
         "jira_keys":      ["COL"],
-        "tc_teams":       ["Collaboration Technology"],
+        "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "IT", "SYS", "NET"],
         "members": {
             "Kevin Maiberger",
@@ -107,7 +107,7 @@ GROUPS = OrderedDict([
     }),
     ("Systems Engineering", {
         "jira_keys":      ["SYS"],
-        "tc_teams":       ["System Administration"],
+        "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "NET"],
         "members": {
             "Allen Neely", "Amar Rana", "Ambers Ferrara", "Areshkumar Venkatesan",
@@ -118,7 +118,7 @@ GROUPS = OrderedDict([
     }),
     ("Network Services", {
         "jira_keys":      ["NET"],
-        "tc_teams":       ["Network Administration"],
+        "tc_teams":       [],
         "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "SYS"],
         "members": {
             "Brian Graham", "David Fuentes", "Kailash Mohnani",
