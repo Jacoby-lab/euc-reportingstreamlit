@@ -65,7 +65,7 @@ GROUPS = OrderedDict([
         # tc_teams: not used for EUC — cross_projects replaces it for broader coverage
         "tc_teams":  [],
         # cross_projects: all other projects EUC members may log time in (TC source)
-        "cross_projects": ["TC", "IT", "COL", "SYS", "NET", "ITPP"],
+        "cross_projects": ["TC", "IT", "COL", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
         "members": {
             "Nick Shelton", "Jake Snodgrass", "Matthew Davis", "Khai Nguyen",
             "Justin Pham", "Nicholas Bowling", "Wes Hurd", "Kenneth Calvert",
@@ -80,7 +80,7 @@ GROUPS = OrderedDict([
     ("Identity", {
         "jira_keys":      ["ID"],
         "tc_teams":       [],
-        "cross_projects": ["EUC", "TC", "IT", "COL", "SYS", "NET", "ITPP"],
+        "cross_projects": ["EUC", "TC", "IT", "COL", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
         "members": {
             "Alexis Lopez Lopez",
             "Scott Tarnell",
@@ -89,7 +89,7 @@ GROUPS = OrderedDict([
     ("Service Desk", {
         "jira_keys":      ["IT"],
         "tc_teams":       [],
-        "cross_projects": ["EUC", "ID", "TC", "COL", "SYS", "NET", "ITPP"],
+        "cross_projects": ["EUC", "ID", "TC", "COL", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
         "members": {
             "George Loyola", "Jef Davis", "Nazir Latefe", "Noel Abraham",
             "Paul Forte", "Taylor Johnson", "Tirth Patel", "Xavier Abaunza",
@@ -98,7 +98,7 @@ GROUPS = OrderedDict([
     ("Collaboration", {
         "jira_keys":      ["COL"],
         "tc_teams":       [],
-        "cross_projects": ["EUC", "ID", "TC", "IT", "SYS", "NET", "ITPP"],
+        "cross_projects": ["EUC", "ID", "TC", "IT", "SYS", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
         "members": {
             "Kevin Maiberger",
             "Scott Tarnell",
@@ -108,7 +108,7 @@ GROUPS = OrderedDict([
     ("Systems Engineering", {
         "jira_keys":      ["SYS"],
         "tc_teams":       [],
-        "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "NET", "ITPP"],
+        "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "NET", "ITPP", "ITDS", "IOAI", "SDI"],
         "members": {
             "Allen Neely", "Amar Rana", "Ambers Ferrara", "Areshkumar Venkatesan",
             "Bianca Fialho", "Bijoy Babu", "Chris Dugas", "David Stratman",
@@ -119,7 +119,7 @@ GROUPS = OrderedDict([
     ("Network Services", {
         "jira_keys":      ["NET"],
         "tc_teams":       [],
-        "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "SYS", "ITPP"],
+        "cross_projects": ["EUC", "ID", "TC", "IT", "COL", "SYS", "ITPP", "ITDS", "IOAI", "SDI"],
         "members": {
             "Brian Graham", "David Fuentes", "Kailash Mohnani",
             "Mukesh Kumar", "Shaurya Katiyar",
