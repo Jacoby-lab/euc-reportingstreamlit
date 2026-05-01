@@ -209,13 +209,14 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
         rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "Jira", "KTLO"))
 
     # TC / JSM tickets filtered by team (Svc Req/Incident by default)
+    # worklogDate excluded from TC JQL — combining it with custom fields can return 0 results.
+    # Date filtering is applied in _extract_rows instead.
     if cfg["tc_teams"]:
         teams_str = ", ".join(f'"{t}"' for t in cfg["tc_teams"])
         jql = (
             f'project = "TC" '
             f'AND "{tc_team_field}" in ({teams_str}) '
-            f'AND worklogDate >= "{date_start}" '
-            f'AND worklogDate <= "{date_end}"'
+            f'AND updated >= "{date_start}"'
         )
         issues = _paginate_issues(base_url, auth, headers, jql)
         rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req"))
