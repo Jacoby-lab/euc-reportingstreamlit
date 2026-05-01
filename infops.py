@@ -80,7 +80,7 @@ GROUPS = OrderedDict([
     ("Identity", {
         "jira_keys":      ["ID"],
         "tc_teams":       [],
-        "cross_projects": ["EUC", "TC", "IT", "COL", "SYS", "NET"],
+        "cross_projects": ["EUC", "TC", "IT", "COL", "SYS", "NET", "ITPP"],
         "members": {
             "Alexis Lopez Lopez",
             "Scott Tarnell",
