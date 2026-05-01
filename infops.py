@@ -1248,9 +1248,9 @@ with tab_sprint:
                     hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{customdata[0]}<extra></extra>"
                 )
                 fig_bar.update_layout(
-                    height=max(350, len(sort_names) * 50 + 120),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                    margin=dict(t=60, b=20, l=0, r=20),
+                    height=max(350, len(sort_names) * 50 + 140),
+                    legend=dict(orientation="h", yanchor="top", y=-0.08, xanchor="left", x=0),
+                    margin=dict(t=50, b=60, l=0, r=20),
                 )
                 st.plotly_chart(fig_bar, width='stretch')
 
