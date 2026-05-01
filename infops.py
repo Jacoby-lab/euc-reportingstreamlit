@@ -55,7 +55,7 @@ SOURCE_COLORS = {"Jira": "#3B82F6", "TC": "#10B981"}
 
 # ── Group configuration ───────────────────────────────────────────────────
 # Maps display group name → Jira project keys + TC JSM team names.
-# tc_team_field secret controls the JQL field (default: "Team[Jira Software]").
+# tc_team_field secret controls the JQL field (default: "Assigned Group").
 # If your Jira instance uses a different field, set tc_team_field in secrets.
 GROUPS = OrderedDict([
     ("End User Computing", {
@@ -187,7 +187,7 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
         base_url      = st.secrets["jira"]["base_url"].rstrip("/")
         email         = st.secrets["jira"]["email"]
         token         = st.secrets["jira"]["api_token"]
-        tc_team_field = st.secrets["jira"].get("tc_team_field", "Team[Jira Software]")
+        tc_team_field = st.secrets["jira"].get("tc_team_field", "Assigned Group")
     except KeyError as e:
         st.error(f"Missing Jira secret: {e}. Check Settings → Secrets.")
         return pd.DataFrame()
@@ -209,13 +209,14 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
         rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "Jira", "KTLO"))
 
     # TC / JSM tickets filtered by team (Svc Req/Incident by default)
+    # worklogDate excluded from TC JQL — combining it with custom fields can return 0 results.
+    # Date filtering is applied in _extract_rows instead.
     if cfg["tc_teams"]:
         teams_str = ", ".join(f'"{t}"' for t in cfg["tc_teams"])
         jql = (
             f'project = "TC" '
             f'AND "{tc_team_field}" in ({teams_str}) '
-            f'AND worklogDate >= "{date_start}" '
-            f'AND worklogDate <= "{date_end}"'
+            f'AND updated >= "{date_start}"'
         )
         issues = _paginate_issues(base_url, auth, headers, jql)
         rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req"))
