@@ -890,26 +890,40 @@ with tab3:
         with cl:
             cat_sorted_asc = cat_tab.sort_values(selected_cat, ascending=True).copy()
 
-            # Color bars by dominant source (Jira vs TC) for this person+category
+            # Assign a unique color per person from a qualitative palette
+            palette = px.colors.qualitative.Plotly + px.colors.qualitative.D3
+            names_ordered = cat_sorted_asc["Name"].tolist()
+            color_map = {n: palette[i % len(palette)] for i, n in enumerate(names_ordered)}
+            cat_sorted_asc["_color"] = cat_sorted_asc["Name"].map(color_map)
+
+            # Add source breakdown to custom data for tooltip
             if not _raw_filtered.empty:
-                src_map = (
+                src_hrs = (
                     _raw_filtered[_raw_filtered["category"] == selected_cat]
-                    .groupby("Name")["source"]
-                    .agg(lambda x: "Jira" if (x == "Jira").sum() >= (x == "TC").sum() else "TC")
+                    .groupby(["Name", "source"])["hours"].sum().unstack(fill_value=0)
                 )
-                cat_sorted_asc["Source"] = cat_sorted_asc["Name"].map(src_map).fillna("Jira")
+                for col in ["Jira", "TC"]:
+                    if col not in src_hrs:
+                        src_hrs[col] = 0
+                src_hrs = src_hrs.reset_index()
+                src_hrs["Jira_fmt"] = src_hrs["Jira"].apply(fh)
+                src_hrs["TC_fmt"]   = src_hrs["TC"].apply(fh)
+                cat_sorted_asc = cat_sorted_asc.merge(src_hrs[["Name","Jira_fmt","TC_fmt"]], on="Name", how="left")
+                cat_sorted_asc["Jira_fmt"] = cat_sorted_asc["Jira_fmt"].fillna("0h 00m")
+                cat_sorted_asc["TC_fmt"]   = cat_sorted_asc["TC_fmt"].fillna("0h 00m")
             else:
-                cat_sorted_asc["Source"] = "Jira"
+                cat_sorted_asc["Jira_fmt"] = "0h 00m"
+                cat_sorted_asc["TC_fmt"]   = "0h 00m"
 
             fig_cat = px.bar(
                 cat_sorted_asc,
                 x=selected_cat, y="Name",
-                color="Source",
-                color_discrete_map=SOURCE_COLORS,
+                color="Name",
+                color_discrete_map=color_map,
                 orientation="h",
                 text="bar_label",
                 height=max(360, len(cat_tab) * 50),
-                custom_data=["pct_own", "Hours_fmt"],
+                custom_data=["pct_own", "Hours_fmt", "Jira_fmt", "TC_fmt"],
             )
             fig_cat.update_traces(
                 textposition="outside",
@@ -917,14 +931,15 @@ with tab3:
                 hovertemplate=(
                     "<b>%{y}</b><br>"
                     + selected_cat
-                    + ": %{customdata[1]}<br>%{customdata[0]:.1f}% of their period<extra></extra>"
+                    + ": %{customdata[1]}<br>"
+                    + "Jira: %{customdata[2]} · TC: %{customdata[3]}<br>"
+                    + "%{customdata[0]:.1f}% of their period<extra></extra>"
                 ),
             )
             fig_cat.update_layout(
                 xaxis_title="Hours (decimal)",
                 yaxis_title="",
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                showlegend=False,
                 margin=dict(t=40, r=130, b=20, l=0),
             )
             st.markdown(f"**{CAT_LABELS[selected_cat]} — Hours by Person**")
