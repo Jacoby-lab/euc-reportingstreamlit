@@ -5,6 +5,9 @@ import requests
 from collections import OrderedDict
 from datetime import date, timedelta
 
+# ── Feature flags ────────────────────────────────────────────────────────
+ENABLE_PERIOD_COMPARISON = True   # set False to disable prev-period delta arrows
+
 # ── Page config ───────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="I&O Report",
@@ -397,6 +400,32 @@ with st.sidebar:
     elif range_type == "Yearly":
         period_label = str(sel_year)
 
+    # Previous period dates (same span length, shifted back)
+    _span = (date_end - date_start).days + 1
+    if range_type == "Monthly":
+        _pm = date_start.month - 1 or 12
+        _py = date_start.year if date_start.month > 1 else date_start.year - 1
+        prev_start = date(_py, _pm, 1)
+        _pnm = prev_start.replace(day=28) + timedelta(days=4)
+        prev_end = _pnm - timedelta(days=_pnm.day)
+    elif range_type == "Quarterly":
+        prev_start = date_start - timedelta(days=91)
+        prev_start = date(prev_start.year, ((prev_start.month - 1) // 3) * 3 + 1, 1)
+        _pnm = prev_start.replace(month=min(prev_start.month + 2, 12), day=28) + timedelta(days=4)
+        prev_end = _pnm - timedelta(days=_pnm.day)
+    elif range_type == "Yearly":
+        prev_start = date(date_start.year - 1, 1, 1)
+        prev_end   = date(date_start.year - 1, 12, 31)
+    elif range_type == "Year to Date":
+        prev_start = date(date_start.year - 1, 1, 1)
+        prev_end   = date(date_start.year - 1, _today.month, _today.day)
+    else:
+        prev_start = date_start - timedelta(days=_span)
+        prev_end   = date_end   - timedelta(days=_span)
+
+    prev_start_s = prev_start.strftime("%Y-%m-%d")
+    prev_end_s   = prev_end.strftime("%Y-%m-%d")
+
     date_start_s = date_start.strftime("%Y-%m-%d")
     date_end_s   = date_end.strftime("%Y-%m-%d")
     st.caption(f"{period_label} · {period_code}")
@@ -407,6 +436,11 @@ with st.sidebar:
 with st.spinner(f"Loading Jira data for {selected_group} · {period_label}…"):
     _raw = fetch_worklogs(date_start_s, date_end_s, selected_group)
     df   = build_summary_df(_raw)
+    if ENABLE_PERIOD_COMPARISON:
+        _raw_prev = fetch_worklogs(prev_start_s, prev_end_s, selected_group)
+        _prev_df  = build_summary_df(_raw_prev)
+    else:
+        _prev_df  = pd.DataFrame()
 
 _active  = int((df["Total"] > 0).sum()) if not df.empty else 0
 _tot_all = fh(df["Total"].sum()) if not df.empty else "0h 00m"
@@ -663,11 +697,21 @@ with tab1:
 
         st.markdown("")
 
+        prev_cat_sums = {}
+        if ENABLE_PERIOD_COMPARISON and not _prev_df.empty:
+            _prev_filtered = _prev_df[_prev_df["Name"].isin(selected_names)].copy() if selected_names else _prev_df.copy()
+            prev_cat_sums = {c: _prev_filtered[c].sum() for c in active_cats if c in _prev_filtered.columns}
+
         cat_cols_row = st.columns(len(active_cats))
         for cat, col in zip(active_cats, cat_cols_row):
             pct = cat_sums[cat] / grand * 100
             with col:
-                st.metric(cat, fh(cat_sums[cat]), f"{pct:.0f}%")
+                if ENABLE_PERIOD_COMPARISON and cat in prev_cat_sums:
+                    delta_h = cat_sums[cat] - prev_cat_sums[cat]
+                    delta_str = f"+{fh(delta_h)}" if delta_h >= 0 else f"-{fh(abs(delta_h))}"
+                    st.metric(cat, fh(cat_sums[cat]), delta_str)
+                else:
+                    st.metric(cat, fh(cat_sums[cat]), f"{pct:.0f}%")
 
         st.divider()
 
