@@ -60,7 +60,7 @@ SOURCE_COLORS = {"Jira": "#3B82F6", "TC": "#10B981"}
 #   Leave empty/omit to include all authors found in those projects.
 GROUPS = OrderedDict([
     ("End User Computing", {
-        "jira_keys": ["EUC"],
+        "jira_keys": ["EUC", "ID"],
         "tc_teams":  ["End User Computing", "End User Computing Mexico"],
         "members": {
             "Nick Shelton", "Jake Snodgrass", "Matthew Davis", "Khai Nguyen",
@@ -74,7 +74,7 @@ GROUPS = OrderedDict([
         },
     }),
     ("Identity", {
-        "jira_keys": ["ID"],
+        "jira_keys": [],
         "tc_teams":  ["Identity Access Management"],
         "members":   set(),  # populate when member list is known
     }),
