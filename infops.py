@@ -266,10 +266,11 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
 
     jira_keys   = set(cfg.get("jira_keys", []))
     authors_str = ", ".join(f'"{m}"' for m in members)
+    # worklogDate JQL is unreliable for older ranges in Jira Cloud (index gaps).
+    # updated >= date_start is always indexed; _extract_rows filters by exact date.
     jql = (
         f'worklogAuthor in ({authors_str}) '
-        f'AND worklogDate >= "{date_start}" '
-        f'AND worklogDate <= "{date_end}"'
+        f'AND updated >= "{date_start}"'
     )
     issues = _paginate_issues(base_url, auth, headers, jql)
     rows   = _extract_rows(issues, base_url, auth, headers, date_start, date_end, members, jira_keys)
@@ -494,9 +495,10 @@ tab_dash, tab1, tab2, tab3 = st.tabs(
 # TAB 0 · DASHBOARD  (always full group — sidebar name filter not applied)
 # ═══════════════════════════════════════════════════════════════════════════
 with tab_dash:
-    jira_total = df["Jira"].sum() if not df.empty else 0
-    tc_total   = df["TC"].sum()   if not df.empty else 0
-    all_total  = jira_total + tc_total or 1
+    jira_total  = df["Jira"].sum() if not df.empty else 0
+    tc_total    = df["TC"].sum()   if not df.empty else 0
+    grand_total = jira_total + tc_total
+    all_total   = grand_total or 1  # denominator only — never used for display
 
     st.markdown(f"""
 <div style="margin-bottom:6px;">
@@ -530,7 +532,7 @@ with tab_dash:
         st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1c1c2e,#0f172a);border:1px solid #334155;border-radius:12px;padding:20px 22px;text-align:center;">
   <div style="color:#94a3b8;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">⏱ Grand Total</div>
-  <div style="font-size:2rem;font-weight:800;color:#f1f5f9">{fh(all_total)}</div>
+  <div style="font-size:2rem;font-weight:800;color:#f1f5f9">{fh(grand_total)}</div>
   <div style="color:#94a3b8;font-size:0.82rem;margin-top:4px">{_active} active members</div>
   <div style="color:#64748b;font-size:0.82rem">{period_code}</div>
 </div>""", unsafe_allow_html=True)
