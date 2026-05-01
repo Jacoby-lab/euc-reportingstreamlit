@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
+from collections import OrderedDict
 from datetime import date, timedelta
 
 # ── Page config ───────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="EUC Weekly Report",
+    page_title="I&O Report",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -50,7 +51,48 @@ CAT_LABELS = {
     "Incident":   "🚨 Incident",
 }
 
-REGION_COLORS = {"US": "#3B82F6", "MX": "#F59E0B"}
+SOURCE_COLORS = {"Jira": "#3B82F6", "TC": "#10B981"}
+
+# ── Group configuration ───────────────────────────────────────────────────
+# Maps display group name → Jira project keys + TC JSM team names.
+# tc_team_field secret controls the JQL field (default: "Team[Jira Software]").
+# If your Jira instance uses a different field, set tc_team_field in secrets.
+GROUPS = OrderedDict([
+    ("End User Computing", {
+        "jira_keys": ["EUC"],
+        "tc_teams":  ["End User Computing", "End User Computing Mexico"],
+    }),
+    ("Identity", {
+        "jira_keys": ["ID"],
+        "tc_teams":  ["Identity Access Management"],
+    }),
+    ("Service Desk", {
+        "jira_keys": ["IT"],
+        "tc_teams":  ["Service Desk"],
+    }),
+    ("Collaboration", {
+        "jira_keys": ["COL"],
+        "tc_teams":  ["Collaboration Technology"],
+    }),
+    ("Systems Engineering", {
+        "jira_keys": ["SYS"],
+        "tc_teams":  ["System Administration"],
+    }),
+    ("Network Services", {
+        "jira_keys": ["NET"],
+        "tc_teams":  ["Network Administration"],
+    }),
+])
+
+LABEL_TO_CAT = {
+    "ktlo":            "KTLO",
+    "initiative":      "Initiative",
+    "tech_debt":       "Tech Debt",
+    "tech debt":       "Tech Debt",
+    "service_request": "Svc Req",
+    "service request": "Svc Req",
+    "incident":        "Incident",
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -76,79 +118,8 @@ def fh(d: float) -> str:
     return f"{t // 60}h {t % 60:02d}m"
 
 
-# ── Team registry — maps Jira display names → region ─────────────────────
-TEAM_REGIONS = {
-    # US
-    "Nick Shelton":              "US",
-    "Jake Snodgrass":            "US",
-    "Matthew Davis":             "US",
-    "Khai Nguyen":               "US",
-    "Justin Pham":               "US",
-    "Nicholas Bowling":          "US",
-    "Wes Hurd":                  "US",
-    "Kenneth Calvert":           "US",
-    "Jaylon Martin":             "US",
-    "Hector Cossyleon":          "US",
-    # MX
-    "Eduardo Rangel Ruiz":       "MX",
-    "Alonso Renteria Olvera":    "MX",
-    "Santiago Morales":          "MX",
-    "Antonio Lopez":             "MX",
-    "Luis Tejeda Sosa":          "MX",
-    "Esaú Gallardo":             "MX",
-    "Esau Gallardo":             "MX",  # accent-free variant in Jira
-    "Roberto Gaitan Zamudio":    "MX",
-    "Gabriela Martinez Atriano": "MX",
-    "Edgar Aquino Lopez":        "MX",
-    "Joshua Ramos Dailey":       "MX",
-    "Mildred Moron Guerrero":    "MX",
-    # NL — rolled into US
-    "Julian Hoeksema":           "US",
-    "Armand Theunis":            "US",
-    "Wessel Geest":              "US",
-}
-
-TEAM_NAMES = set(TEAM_REGIONS.keys())
-
-# ── Jira label → category mapping ────────────────────────────────────────
-LABEL_TO_CAT = {
-    "ktlo":            "KTLO",
-    "initiative":      "Initiative",
-    "tech_debt":       "Tech Debt",
-    "tech debt":       "Tech Debt",
-    "service_request": "Svc Req",
-    "service request": "Svc Req",
-    "incident":        "Incident",
-}
-
-
-# ── Jira data fetch ───────────────────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
-    """Pull EUC, TechConnect, and Identity worklogs for the given date range from Jira."""
-    try:
-        base_url = st.secrets["jira"]["base_url"].rstrip("/")
-        email    = st.secrets["jira"]["email"]
-        token    = st.secrets["jira"]["api_token"]
-        # Comma-separated Jira project keys.
-        # TC covers "End User Computing" and "End User Computing Mexico" in TechConnect.
-        # ID covers the Identity project space.
-        projects = [p.strip() for p in
-                    st.secrets["jira"].get("projects", "EUC,TC,ID").split(",")]
-    except KeyError as e:
-        st.error(f"Missing Jira secret: {e}. Check Settings → Secrets.")
-        return pd.DataFrame()
-
-    auth    = (email, token)
-    headers = {"Accept": "application/json"}
-    proj_str = ", ".join(f'"{p}"' for p in projects)
-    jql = (
-        f'project in ({proj_str}) '
-        f'AND worklogDate >= "{date_start}" '
-        f'AND worklogDate <= "{date_end}"'
-    )
-
-    # ── Paginate through all matching issues (cursor-based) ──
+# ── Jira fetch helpers ────────────────────────────────────────────────────
+def _paginate_issues(base_url, auth, headers, jql):
     issues, next_page_token = [], None
     while True:
         params = {
@@ -158,47 +129,35 @@ def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
         }
         if next_page_token:
             params["nextPageToken"] = next_page_token
-
         resp = requests.get(
             f"{base_url}/rest/api/3/search/jql",
-            auth=auth, headers=headers,
-            params=params,
-            timeout=30,
+            auth=auth, headers=headers, params=params, timeout=30,
         )
         if not resp.ok:
             st.error(
                 f"Jira API error {resp.status_code}: {resp.reason}\n\n"
-                f"URL tried: `{base_url}/rest/api/3/search/jql`\n\n"
-                f"Response: {resp.text[:500]}"
+                f"JQL: `{jql}`\n\nResponse: {resp.text[:500]}"
             )
-            return pd.DataFrame()
+            return []
         data = resp.json()
         issues.extend(data.get("issues", []))
         next_page_token = data.get("nextPageToken")
         if not next_page_token:
             break
+    return issues
 
-    # ── Extract individual worklog rows ──
+
+def _extract_rows(issues, base_url, auth, headers, date_start, date_end, source, default_cat):
     rows = []
     for issue in issues:
-        fields      = issue["fields"]
-        raw_labels  = [l.lower() for l in fields.get("labels", [])]
-        project_key = fields.get("project", {}).get("key", "")
-        if project_key in ("EUC", "ID"):
-            source = "EUC"  # ID (Identity) rolls up into EUC bucket
-        else:
-            source = "TechConnect"  # TC, End User Computing, End User Computing Mexico
-
-        # First matching label wins; EUC/ID unlabeled → KTLO, TC unlabeled → Svc Req
-        category = next(
-            (LABEL_TO_CAT[l] for l in raw_labels if l in LABEL_TO_CAT),
-            "KTLO" if source == "EUC" else "Svc Req",
+        fields     = issue["fields"]
+        raw_labels = [lb.lower() for lb in fields.get("labels", [])]
+        category   = next(
+            (LABEL_TO_CAT[lb] for lb in raw_labels if lb in LABEL_TO_CAT),
+            default_cat,
         )
-
         wl_data  = fields.get("worklog", {})
         worklogs = wl_data.get("worklogs", [])
-
-        # Fetch remaining worklogs if Jira only returned the first 20
         if wl_data.get("total", 0) > len(worklogs):
             wl_resp = requests.get(
                 f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
@@ -206,40 +165,77 @@ def fetch_worklogs(date_start: str, date_end: str) -> pd.DataFrame:
             )
             if wl_resp.ok:
                 worklogs = wl_resp.json().get("worklogs", [])
-
         for wl in worklogs:
             log_date = wl["started"][:10]
             if not (date_start <= log_date <= date_end):
                 continue
-            author = wl["author"]["displayName"]
-            if author not in TEAM_NAMES:
-                continue
             rows.append({
-                "Name":     author,
-                "Region":   TEAM_REGIONS.get(author, "Unknown"),
+                "Name":     wl["author"]["displayName"],
                 "source":   source,
                 "category": category,
                 "hours":    wl["timeSpentSeconds"] / 3600,
                 "date":     log_date,
                 "issue":    issue["key"],
             })
+    return rows
 
-    empty_cols = ["Name", "Region", "source", "category", "hours", "date", "issue"]
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFrame:
+    """Pull worklogs for the selected I&O group from Jira projects + TC JSM teams."""
+    try:
+        base_url      = st.secrets["jira"]["base_url"].rstrip("/")
+        email         = st.secrets["jira"]["email"]
+        token         = st.secrets["jira"]["api_token"]
+        tc_team_field = st.secrets["jira"].get("tc_team_field", "Team[Jira Software]")
+    except KeyError as e:
+        st.error(f"Missing Jira secret: {e}. Check Settings → Secrets.")
+        return pd.DataFrame()
+
+    auth    = (email, token)
+    headers = {"Accept": "application/json"}
+    cfg     = GROUPS[group_name]
+    rows    = []
+
+    # Jira project tickets (KTLO/Initiative/Tech Debt by default)
+    if cfg["jira_keys"]:
+        proj_str = ", ".join(f'"{k}"' for k in cfg["jira_keys"])
+        jql = (
+            f'project in ({proj_str}) '
+            f'AND worklogDate >= "{date_start}" '
+            f'AND worklogDate <= "{date_end}"'
+        )
+        issues = _paginate_issues(base_url, auth, headers, jql)
+        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "Jira", "KTLO"))
+
+    # TC / JSM tickets filtered by team (Svc Req/Incident by default)
+    if cfg["tc_teams"]:
+        teams_str = ", ".join(f'"{t}"' for t in cfg["tc_teams"])
+        jql = (
+            f'project = "TC" '
+            f'AND "{tc_team_field}" in ({teams_str}) '
+            f'AND worklogDate >= "{date_start}" '
+            f'AND worklogDate <= "{date_end}"'
+        )
+        issues = _paginate_issues(base_url, auth, headers, jql)
+        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req"))
+
+    empty_cols = ["Name", "source", "category", "hours", "date", "issue"]
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
 
 
 def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate raw worklog rows into the per-person summary the app uses."""
-    src_cols = ["EUC", "TechConnect"]
-    all_cols  = ["Name", "Region", "Total"] + src_cols + CATEGORIES
+    """Aggregate raw worklog rows into per-person summary."""
+    src_cols = ["Jira", "TC"]
+    all_cols = ["Name", "Total"] + src_cols + CATEGORIES
     if raw.empty:
         return pd.DataFrame(columns=all_cols)
 
-    totals = raw.groupby(["Name", "Region"])["hours"].sum().reset_index()
-    totals.columns = ["Name", "Region", "Total"]
+    totals = raw.groupby("Name")["hours"].sum().reset_index()
+    totals.columns = ["Name", "Total"]
 
     src_piv = raw.pivot_table(
-        index=["Name", "Region"], columns="source",
+        index="Name", columns="source",
         values="hours", aggfunc="sum", fill_value=0,
     ).reset_index()
     for col in src_cols:
@@ -247,7 +243,7 @@ def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
             src_piv[col] = 0.0
 
     cat_piv = raw.pivot_table(
-        index=["Name", "Region"], columns="category",
+        index="Name", columns="category",
         values="hours", aggfunc="sum", fill_value=0,
     ).reset_index()
     for cat in CATEGORIES:
@@ -256,16 +252,24 @@ def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
 
     result = (
         totals
-        .merge(src_piv[["Name", "Region"] + src_cols], on=["Name", "Region"], how="left")
-        .merge(cat_piv[["Name", "Region"] + CATEGORIES], on=["Name", "Region"], how="left")
+        .merge(src_piv[["Name"] + src_cols], on="Name", how="left")
+        .merge(cat_piv[["Name"] + CATEGORIES], on="Name", how="left")
         .fillna(0.0)
     )
     return result
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────
+# ── Sidebar Part 1: Filters + Date Range ─────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📊 EUC Report")
+    st.markdown("## 📊 I&O Report")
+    st.divider()
+
+    st.markdown("**Filters**")
+    selected_group = st.selectbox(
+        "Group",
+        options=list(GROUPS.keys()),
+        help="Select the I&O group to view",
+    )
     st.divider()
 
     _today  = date.today()
@@ -327,7 +331,6 @@ with st.sidebar:
         date_end   = _range[1] if isinstance(_range, (list, tuple)) and len(_range) > 1 else date_start
         period_code  = "Custom"
 
-    # Build human-readable period label
     if date_start.month == date_end.month and date_start.year == date_end.year:
         period_label = f"{date_start.strftime('%b %-d')}–{date_end.strftime('%-d, %Y')}"
     elif date_start.year == date_end.year:
@@ -347,90 +350,51 @@ with st.sidebar:
     date_start_s = date_start.strftime("%Y-%m-%d")
     date_end_s   = date_end.strftime("%Y-%m-%d")
     st.caption(f"{period_label} · {period_code}")
-
     st.divider()
-
-    search_query = st.text_input(
-        "🔍 Search by name",
-        placeholder="e.g. Nick, Martinez...",
-    )
-    st.divider()
-
-    st.markdown("**Filters**")
-    region_filter = st.multiselect(
-        "Region",
-        options=["US", "MX"],
-        default=["US", "MX"],
-    )
-    source_filter = st.radio(
-        "Ticket Source",
-        options=["All", "EUC", "TechConnect"],
-        help=(
-            "EUC → KTLO, Initiative, Tech Debt (includes Identity project)\n"
-            "TechConnect → Svc Req, Incident"
-        ),
-    )
-    st.divider()
-    st.caption("Jira EUC · TechConnect · refreshes hourly")
 
 
 # ── Load data ─────────────────────────────────────────────────────────────
-with st.spinner(f"Loading Jira data for {period_label}…"):
-    _raw = fetch_worklogs(date_start_s, date_end_s)
+with st.spinner(f"Loading Jira data for {selected_group} · {period_label}…"):
+    _raw = fetch_worklogs(date_start_s, date_end_s, selected_group)
     df   = build_summary_df(_raw)
 
 _active  = int((df["Total"] > 0).sum()) if not df.empty else 0
 _tot_all = fh(df["Total"].sum()) if not df.empty else "0h 00m"
 
 
-# ── Apply filters ─────────────────────────────────────────────────────────
-mask = df["Region"].isin(region_filter) if not df.empty else pd.Series([], dtype=bool)
-if search_query.strip():
-    mask &= df["Name"].str.contains(search_query.strip(), case=False, na=False)
-fdf = df[mask].copy() if not df.empty else df.copy()
-
-if source_filter == "EUC":
-    fdf["_display_total"] = fdf["EUC"]
-    active_cats = ["KTLO", "Initiative", "Tech Debt"]
-elif source_filter == "TechConnect":
-    fdf["_display_total"] = fdf["TechConnect"]
-    active_cats = ["Svc Req", "Incident"]
-else:  # All
-    fdf["_display_total"] = fdf["Total"]
-    active_cats = CATEGORIES
-
-# ── Re-scope category columns to match source filter ─────────────────────
-# Without this, category columns include all sources even when one is selected,
-# causing totals and category sums to disagree.
-if source_filter != "All" and not _raw.empty:
-    _raw_src = _raw[_raw["source"] == source_filter]
-    _src_cat = (
-        _raw_src[_raw_src["Name"].isin(fdf["Name"])]
-        .groupby(["Name", "category"])["hours"]
-        .sum()
-        .unstack(fill_value=0.0)
+# ── Sidebar Part 2: Search by name (populated from fetched data) ──────────
+with st.sidebar:
+    name_options   = sorted(_raw["Name"].unique().tolist()) if not _raw.empty else []
+    selected_names = st.multiselect(
+        "🔍 Search by name",
+        options=name_options,
+        placeholder="Select team members…",
     )
-    for cat in CATEGORIES:
-        fdf[cat] = fdf["Name"].map(
-            _src_cat[cat] if cat in _src_cat.columns else pd.Series(dtype=float)
-        ).fillna(0.0)
+    st.divider()
+    st.caption(f"I&O · {selected_group} · refreshes hourly")
+
+
+# ── Apply filters ─────────────────────────────────────────────────────────
+fdf = df[df["Name"].isin(selected_names)].copy() if selected_names and not df.empty else df.copy()
+fdf["_display_total"] = fdf["Total"]
+active_cats = CATEGORIES
+
+_raw_filtered = _raw[_raw["Name"].isin(selected_names)] if selected_names and not _raw.empty else _raw
 
 
 # ── Page header ───────────────────────────────────────────────────────────
-st.markdown("# EUC Team — Report")
+st.markdown(f"# I&O — {selected_group} Report")
 st.markdown(f"**{period_label} · {period_code}**")
 
 if df.empty:
-    st.warning(f"No worklogs found for {period_label}. The team may not have logged time yet, or check your Jira project key in secrets.")
-elif search_query.strip():
-    st.info(
-        f"Showing results for **\"{search_query.strip()}\"** · "
-        f"{len(fdf)} member(s) · {', '.join(region_filter) if region_filter else 'No regions'} · {source_filter}"
+    st.warning(
+        f"No worklogs found for {selected_group} · {period_label}. "
+        "Team may not have logged time yet, or check Jira project keys in secrets."
     )
+elif selected_names:
+    st.info(f"Showing **{', '.join(selected_names)}** · {len(fdf)} member(s)")
 elif len(fdf) < len(df):
-    st.caption(
-        f"{len(fdf)} member(s) shown · {', '.join(region_filter)} · {source_filter}"
-    )
+    st.caption(f"{len(fdf)} member(s) shown")
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────
@@ -440,51 +404,47 @@ tab_dash, tab1, tab2, tab3, tab4 = st.tabs(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TAB 0 · DASHBOARD  (uses full unfiltered dataset — sidebar filters ignored)
+# TAB 0 · DASHBOARD  (always full group — sidebar name filter not applied)
 # ═══════════════════════════════════════════════════════════════════════════
 with tab_dash:
-    # Always use the full dataset for the executive dashboard
-    us_df  = df[df["Region"] == "US"]
-    mx_df  = df[df["Region"] == "MX"]
-
-    us_total  = us_df["Total"].sum()
-    mx_total  = mx_df["Total"].sum()
-    all_total = us_total + mx_total or 1
+    jira_total = df["Jira"].sum() if not df.empty else 0
+    tc_total   = df["TC"].sum()   if not df.empty else 0
+    all_total  = jira_total + tc_total or 1
 
     st.markdown(f"""
 <div style="margin-bottom:6px;">
-  <span style="font-size:1.5rem;font-weight:800;letter-spacing:-0.5px">EUC Team — Executive Dashboard</span><br>
-  <span style="color:#6b7280;font-size:0.9rem">{period_label} &nbsp;·&nbsp; {period_code} &nbsp;·&nbsp; Full team · Sidebar filters not applied</span>
+  <span style="font-size:1.5rem;font-weight:800;letter-spacing:-0.5px">I&O — {selected_group} Executive Dashboard</span><br>
+  <span style="color:#6b7280;font-size:0.9rem">{period_label} &nbsp;·&nbsp; {period_code} &nbsp;·&nbsp; Full group · Sidebar filters not applied</span>
 </div>
 """, unsafe_allow_html=True)
 
     st.divider()
 
-    # ── Region summary row ──────────────────────────────────────────────
-    st.markdown("##### Team Hours by Region")
+    # ── Source summary row ──────────────────────────────────────────────
+    st.markdown("##### Team Hours by Source")
     r1, r2, r3 = st.columns(3)
     with r1:
         st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1e3a5f,#1e3a8a);border-radius:12px;padding:20px 22px;text-align:center;">
-  <div style="color:#93c5fd;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">US Team</div>
-  <div style="font-size:2rem;font-weight:800;color:#fff">{fh(us_total)}</div>
-  <div style="color:#93c5fd;font-size:0.82rem;margin-top:4px">{int((us_df["Total"] > 0).sum())} active members</div>
-  <div style="color:#60a5fa;font-size:0.82rem">{us_total / all_total * 100:.0f}% of team total</div>
+  <div style="color:#93c5fd;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Jira Projects</div>
+  <div style="font-size:2rem;font-weight:800;color:#fff">{fh(jira_total)}</div>
+  <div style="color:#93c5fd;font-size:0.82rem;margin-top:4px">{int((df["Jira"] > 0).sum()) if not df.empty else 0} contributors</div>
+  <div style="color:#60a5fa;font-size:0.82rem">{jira_total / all_total * 100:.0f}% of total</div>
 </div>""", unsafe_allow_html=True)
     with r2:
         st.markdown(f"""
-<div style="background:linear-gradient(135deg,#4a1942,#7c3aed);border-radius:12px;padding:20px 22px;text-align:center;">
-  <div style="color:#c4b5fd;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">MX Team</div>
-  <div style="font-size:2rem;font-weight:800;color:#fff">{fh(mx_total)}</div>
-  <div style="color:#c4b5fd;font-size:0.82rem;margin-top:4px">{int((mx_df["Total"] > 0).sum())} active members</div>
-  <div style="color:#a78bfa;font-size:0.82rem">{mx_total / all_total * 100:.0f}% of team total</div>
+<div style="background:linear-gradient(135deg,#022c22,#065f46);border-radius:12px;padding:20px 22px;text-align:center;">
+  <div style="color:#6ee7b7;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">TechConnect (TC)</div>
+  <div style="font-size:2rem;font-weight:800;color:#fff">{fh(tc_total)}</div>
+  <div style="color:#6ee7b7;font-size:0.82rem;margin-top:4px">{int((df["TC"] > 0).sum()) if not df.empty else 0} contributors</div>
+  <div style="color:#34d399;font-size:0.82rem">{tc_total / all_total * 100:.0f}% of total</div>
 </div>""", unsafe_allow_html=True)
     with r3:
         st.markdown(f"""
 <div style="background:linear-gradient(135deg,#1c1c2e,#0f172a);border:1px solid #334155;border-radius:12px;padding:20px 22px;text-align:center;">
   <div style="color:#94a3b8;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">⏱ Grand Total</div>
   <div style="font-size:2rem;font-weight:800;color:#f1f5f9">{fh(all_total)}</div>
-  <div style="color:#94a3b8;font-size:0.82rem;margin-top:4px">{int((df["Total"] > 0).sum())} active · {len(set(df["Region"].unique()) & set(region_filter))} regions</div>
+  <div style="color:#94a3b8;font-size:0.82rem;margin-top:4px">{_active} active members</div>
   <div style="color:#64748b;font-size:0.82rem">{period_code}</div>
 </div>""", unsafe_allow_html=True)
 
@@ -492,8 +452,7 @@ with tab_dash:
 
     # ── Category summary row ────────────────────────────────────────────
     st.markdown("##### Work Distribution by Category")
-
-    all_cat_sums = {c: df[c].sum() for c in CATEGORIES}
+    all_cat_sums = {c: df[c].sum() for c in CATEGORIES} if not df.empty else {c: 0 for c in CATEGORIES}
     grand_cat = sum(all_cat_sums.values()) or 1
 
     _DASH_CAT_BG = {
@@ -506,7 +465,7 @@ with tab_dash:
     cat_cols = st.columns(5)
     for cat, col in zip(CATEGORIES, cat_cols):
         bg, accent, light = _DASH_CAT_BG[cat]
-        h = all_cat_sums[cat]
+        h   = all_cat_sums[cat]
         pct = h / grand_cat * 100
         with col:
             st.markdown(f"""
@@ -522,43 +481,39 @@ with tab_dash:
     st.markdown("<br>", unsafe_allow_html=True)
     st.divider()
 
-    # ── US + MX individual charts side-by-side ──────────────────────────
+    # ── Individual breakdown ────────────────────────────────────────────
     st.markdown("##### Individual Breakdown by Category")
     st.caption("Bars normalized to 100% — hover for actual hours · sorted by total hours")
 
-    col_us, col_mx = st.columns(2)
-
-    def make_normalized_bar(team_df, title, color_key="Region"):
-        sort_names = team_df.sort_values("Total", ascending=True)["Name"].tolist()
-        melt = team_df.melt(
+    if not df.empty:
+        sort_names = df.sort_values("Total", ascending=True)["Name"].tolist()
+        melt = df.melt(
             id_vars=["Name"], value_vars=CATEGORIES,
             var_name="Category", value_name="Hours",
         )
         melt["Hours_fmt"] = melt["Hours"].apply(fh)
-        # Compute % of each person's total
-        person_totals = team_df.set_index("Name")["Total"]
+        person_totals = df.set_index("Name")["Total"]
         melt["pct"] = melt.apply(
             lambda r: r["Hours"] / (person_totals.get(r["Name"], 1) or 1) * 100, axis=1
         ).round(1)
 
-        fig = px.bar(
+        fig_ind = px.bar(
             melt,
             y="Name", x="pct",
             color="Category",
             color_discrete_map=CAT_COLORS,
             orientation="h",
             category_orders={"Name": sort_names, "Category": CATEGORIES},
-            title=title,
-            custom_data=["Hours_fmt", "Hours", "pct"],
+            custom_data=["Hours_fmt", "pct"],
         )
-        fig.update_traces(
+        fig_ind.update_traces(
             hovertemplate=(
                 "<b>%{y}</b><br>"
-                "%{fullData.name}: %{customdata[0]} (%{customdata[2]:.1f}%)"
+                "%{fullData.name}: %{customdata[0]} (%{customdata[1]:.1f}%)"
                 "<extra></extra>"
             )
         )
-        fig.update_layout(
+        fig_ind.update_layout(
             xaxis=dict(
                 title="% of period",
                 ticksuffix="%",
@@ -567,82 +522,70 @@ with tab_dash:
                 gridcolor="rgba(255,255,255,0.06)",
             ),
             yaxis=dict(title="", tickfont=dict(size=11)),
-            legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="left", x=0, font=dict(size=11)),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=11)),
             margin=dict(t=10, b=20, l=0, r=10),
-            height=max(340, len(team_df) * 42),
+            height=max(340, len(df) * 42),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        fig.update_xaxes(showline=False)
-        fig.update_yaxes(showgrid=False)
-        return fig
-
-    with col_us:
-        st.markdown("##### US Team — Time by Category")
-        st.plotly_chart(
-            make_normalized_bar(us_df, ""),
-            width='stretch',
-        )
-
-    with col_mx:
-        st.markdown("##### MX Team — Time by Category")
-        st.plotly_chart(
-            make_normalized_bar(mx_df, ""),
-            width='stretch',
-        )
+        fig_ind.update_xaxes(showline=False)
+        fig_ind.update_yaxes(showgrid=False)
+        st.plotly_chart(fig_ind, width='stretch')
 
     st.divider()
 
-    # ── Total team treemap ───────────────────────────────────────────────
+    # ── Treemap ─────────────────────────────────────────────────────────
     st.markdown("##### Total Team — Hours by Category & Person")
     st.caption("Box size = hours logged · click a category to drill into its members")
 
-    tree_melt = df[df["Total"] > 0].melt(
-        id_vars=["Name", "Region"],
-        value_vars=CATEGORIES,
-        var_name="Category",
-        value_name="Hours",
-    )
-    tree_melt = tree_melt[tree_melt["Hours"] > 0].copy()
-    tree_melt["Hours_fmt"] = tree_melt["Hours"].apply(fh)
-    # First name + last initial keeps labels short but unique
-    def _short_name(n):
-        parts = n.split()
-        return f"{parts[0]} {parts[-1][0]}." if len(parts) > 1 else n
-    tree_melt["label"] = tree_melt["Name"].apply(_short_name)
+    if not df.empty:
+        tree_melt = df[df["Total"] > 0].melt(
+            id_vars=["Name"],
+            value_vars=CATEGORIES,
+            var_name="Category",
+            value_name="Hours",
+        )
+        tree_melt = tree_melt[tree_melt["Hours"] > 0].copy()
+        tree_melt["Hours_fmt"] = tree_melt["Hours"].apply(fh)
 
-    fig_tree = px.treemap(
-        tree_melt,
-        path=["Category", "label"],
-        values="Hours",
-        color="Category",
-        color_discrete_map=CAT_COLORS,
-        custom_data=["Hours_fmt", "Name", "Region"],
-    )
-    fig_tree.update_traces(
-        texttemplate="<b>%{label}</b><br>%{customdata[0]}",
-        hovertemplate=(
-            "<b>%{customdata[1]}</b> (%{customdata[2]})<br>"
-            "%{parent}: %{customdata[0]}"
-            "<extra></extra>"
-        ),
-        textfont=dict(size=13),
-        marker=dict(line=dict(width=2, color="rgba(0,0,0,0.3)")),
-    )
-    fig_tree.update_layout(
-        height=480,
-        margin=dict(t=10, b=0, l=0, r=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_tree, width='stretch')
+        def _short_name(n):
+            parts = n.split()
+            return f"{parts[0]} {parts[-1][0]}." if len(parts) > 1 else n
 
-    # ── Footer note ──────────────────────────────────────────────────────
+        tree_melt["label"] = tree_melt["Name"].apply(_short_name)
+
+        fig_tree = px.treemap(
+            tree_melt,
+            path=["Category", "label"],
+            values="Hours",
+            color="Category",
+            color_discrete_map=CAT_COLORS,
+            custom_data=["Hours_fmt", "Name"],
+        )
+        fig_tree.update_traces(
+            texttemplate="<b>%{label}</b><br>%{customdata[0]}",
+            hovertemplate=(
+                "<b>%{customdata[1]}</b><br>"
+                "%{parent}: %{customdata[0]}"
+                "<extra></extra>"
+            ),
+            textfont=dict(size=13),
+            marker=dict(line=dict(width=2, color="rgba(0,0,0,0.3)")),
+        )
+        fig_tree.update_layout(
+            height=480,
+            margin=dict(t=10, b=0, l=0, r=0),
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_tree, width='stretch')
+
     _zero_members = [r["Name"] for _, r in df.iterrows() if r["Total"] == 0] if not df.empty else []
     _zero_note = " · " + ", ".join(_zero_members) + " logged 0h" if _zero_members else ""
+    _jira_keys  = " + ".join(GROUPS[selected_group]["jira_keys"])
+    _tc_teams   = ", ".join(GROUPS[selected_group]["tc_teams"])
     st.markdown(f"""
 <div style="color:#4b5563;font-size:0.78rem;margin-top:8px;border-top:1px solid #1f2937;padding-top:10px;">
-  Source: Jira EUC + TechConnect · {period_label} · {period_code} ·
-  KTLO = Keep The Lights On · TC tickets default to Svc Req or Incident{_zero_note}
+  Source: Jira ({_jira_keys}) + TechConnect ({_tc_teams}) · {period_label} · {period_code}{_zero_note}
 </div>
 """, unsafe_allow_html=True)
 
@@ -654,22 +597,22 @@ with tab1:
     if fdf.empty:
         st.info("No members match the current filters.")
     else:
-        total_h = fdf["_display_total"].sum()
+        total_h  = fdf["_display_total"].sum()
         cat_sums = {c: fdf[c].sum() for c in active_cats}
-        grand = sum(cat_sums.values()) or 1
+        grand    = sum(cat_sums.values()) or 1
 
-        # ── KPI row 1 ──
-        m0, m1, m2 = st.columns(3)
+        m0, m1, m2, m3 = st.columns(4)
         with m0:
             st.metric("Total Hours", fh(total_h))
         with m1:
             st.metric("Active Members", int((fdf["Total"] > 0).sum()))
         with m2:
-            st.metric("Regions", " · ".join(sorted(fdf["Region"].unique())))
+            st.metric("Jira", fh(fdf["Jira"].sum()))
+        with m3:
+            st.metric("TC", fh(fdf["TC"].sum()))
 
         st.markdown("")
 
-        # ── KPI row 2: per-category ──
         cat_cols_row = st.columns(len(active_cats))
         for cat, col in zip(active_cats, cat_cols_row):
             pct = cat_sums[cat] / grand * 100
@@ -678,14 +621,13 @@ with tab1:
 
         st.divider()
 
-        # ── Charts row ──
         left, right = st.columns([1, 2])
 
         with left:
             pie_df = pd.DataFrame({
                 "Category": active_cats,
-                "Hours": [cat_sums[c] for c in active_cats],
-                "Hours_fmt": [fh(cat_sums[c]) for c in active_cats],
+                "Hours":    [cat_sums[c] for c in active_cats],
+                "Hours_fmt":[fh(cat_sums[c]) for c in active_cats],
             })
             fig_pie = px.pie(
                 pie_df,
@@ -710,7 +652,7 @@ with tab1:
         with right:
             sort_order = fdf.sort_values("Total", ascending=False)["Name"].tolist()
             stack_melt = fdf.melt(
-                id_vars=["Name", "Region"],
+                id_vars=["Name"],
                 value_vars=active_cats,
                 var_name="Category", value_name="Hours",
             )
@@ -722,7 +664,6 @@ with tab1:
                 color="Category",
                 color_discrete_map=CAT_COLORS,
                 category_orders={"Name": sort_order, "Category": active_cats},
-                title="",
                 labels={"Hours": "Hours (decimal)", "Name": ""},
                 custom_data=["Hours_fmt"],
             )
@@ -739,7 +680,6 @@ with tab1:
             st.plotly_chart(fig_stack, width='stretch')
 
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB 2 · INDIVIDUAL
 # ═══════════════════════════════════════════════════════════════════════════
@@ -748,31 +688,26 @@ with tab2:
         st.info("No members match the current filters.")
 
     elif len(fdf) == 1:
-        # ── Single-person focus ──
         row = fdf.iloc[0]
         st.markdown(f"## {row['Name']}")
-        st.markdown(f"`{row['Region']}` · {period_label}")
+        st.markdown(f"`{selected_group}` · {period_label}")
 
         m1, m2, m3 = st.columns(3)
         with m1:
             st.metric("Total Hours", fh(row["Total"]))
         with m2:
-            st.metric("EUC (incl. Identity)", fh(row["EUC"]))
+            st.metric("Jira", fh(row["Jira"]))
         with m3:
-            st.metric("TechConnect", fh(row["TechConnect"]))
+            st.metric("TechConnect", fh(row["TC"]))
 
         st.divider()
 
         cat_vals = [row[c] for c in active_cats]
-        cat_df = pd.DataFrame({
-            "Category": active_cats,
-            "Hours": cat_vals,
-        })
+        cat_df   = pd.DataFrame({"Category": active_cats, "Hours": cat_vals})
         cat_df["Hours_fmt"] = cat_df["Hours"].apply(fh)
-        cat_df["pct"] = (cat_df["Hours"] / (sum(cat_vals) or 1) * 100).round(1)
+        cat_df["pct"]       = (cat_df["Hours"] / (sum(cat_vals) or 1) * 100).round(1)
 
         p1, p2 = st.columns(2)
-
         with p1:
             fig_p = px.pie(
                 cat_df, names="Category", values="Hours",
@@ -811,12 +746,11 @@ with tab2:
             st.plotly_chart(fig_b, width='stretch')
 
     else:
-        # ── Multi-person view ──
         st.markdown(f"**{len(fdf)} people** — sorted by total hours")
 
         sort_order_asc = fdf.sort_values("Total", ascending=True)["Name"].tolist()
         ind_melt = fdf.melt(
-            id_vars=["Name", "Region"],
+            id_vars=["Name"],
             value_vars=active_cats,
             var_name="Category", value_name="Hours",
         )
@@ -829,7 +763,6 @@ with tab2:
             color_discrete_map=CAT_COLORS,
             orientation="h",
             category_orders={"Name": sort_order_asc, "Category": active_cats},
-            title="",
             height=max(420, len(fdf) * 44),
             custom_data=["Hours_fmt"],
         )
@@ -850,16 +783,16 @@ with tab2:
         grid_cols = st.columns(3)
         for i, (_, r) in enumerate(fdf.sort_values("Total", ascending=False).iterrows()):
             dominant = max(active_cats, key=lambda c: r[c])
-            pct_dom = r[dominant] / (r["Total"] or 1) * 100
+            pct_dom  = r[dominant] / (r["Total"] or 1) * 100
             with grid_cols[i % 3]:
                 st.markdown(f"""
 <div class="member-card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
     <strong style="font-size:0.9rem">{r['Name']}</strong>
-    <span style="background:#1f2937;color:#9ca3af;border-radius:4px;padding:2px 8px;font-size:0.75rem">{r['Region']}</span>
+    <span style="background:#1f2937;color:#9ca3af;border-radius:4px;padding:2px 8px;font-size:0.75rem">{selected_group}</span>
   </div>
   <div style="font-size:1.35rem;font-weight:700;margin-bottom:4px">{fh(r['Total'])}</div>
-  <div style="color:#6b7280;font-size:0.8rem;margin-bottom:8px">EUC {fh(r['EUC'])} &nbsp;·&nbsp; TC {fh(r['TechConnect'])}</div>
+  <div style="color:#6b7280;font-size:0.8rem;margin-bottom:8px">Jira {fh(r['Jira'])} &nbsp;·&nbsp; TC {fh(r['TC'])}</div>
   <div style="font-size:0.82rem;color:{CAT_COLORS.get(dominant,'#fff')}">▶ {dominant}: {fh(r[dominant])} ({pct_dom:.0f}%)</div>
 </div>
 """, unsafe_allow_html=True)
@@ -875,11 +808,11 @@ with tab3:
         format_func=lambda x: CAT_LABELS[x],
     )
 
-    cat_tab = fdf[["Name", "Region", selected_cat, "Total"]].copy()
+    cat_tab = fdf[["Name", selected_cat, "Total"]].copy()
     cat_tab = cat_tab[cat_tab[selected_cat] > 0].sort_values(selected_cat, ascending=False)
 
     total_cat_h = cat_tab[selected_cat].sum()
-    pct_of_all = total_cat_h / (fdf["Total"].sum() or 1) * 100
+    pct_of_all  = total_cat_h / (fdf["Total"].sum() or 1) * 100
 
     km1, km2, km3 = st.columns(3)
     with km1:
@@ -905,15 +838,26 @@ with tab3:
         cl, cr = st.columns([3, 1])
 
         with cl:
-            cat_sorted_asc = cat_tab.sort_values(selected_cat, ascending=True)
+            cat_sorted_asc = cat_tab.sort_values(selected_cat, ascending=True).copy()
+
+            # Color bars by dominant source (Jira vs TC) for this person+category
+            if not _raw_filtered.empty:
+                src_map = (
+                    _raw_filtered[_raw_filtered["category"] == selected_cat]
+                    .groupby("Name")["source"]
+                    .agg(lambda x: "Jira" if (x == "Jira").sum() >= (x == "TC").sum() else "TC")
+                )
+                cat_sorted_asc["Source"] = cat_sorted_asc["Name"].map(src_map).fillna("Jira")
+            else:
+                cat_sorted_asc["Source"] = "Jira"
+
             fig_cat = px.bar(
                 cat_sorted_asc,
                 x=selected_cat, y="Name",
-                color="Region",
-                color_discrete_map=REGION_COLORS,
+                color="Source",
+                color_discrete_map=SOURCE_COLORS,
                 orientation="h",
                 text="bar_label",
-                title="",
                 height=max(360, len(cat_tab) * 50),
                 custom_data=["pct_own", "Hours_fmt"],
             )
@@ -923,7 +867,7 @@ with tab3:
                 hovertemplate=(
                     "<b>%{y}</b><br>"
                     + selected_cat
-                    + ": %{customdata[1]}<br>%{customdata[0]:.1f}% of their week<extra></extra>"
+                    + ": %{customdata[1]}<br>%{customdata[0]:.1f}% of their period<extra></extra>"
                 ),
             )
             fig_cat.update_layout(
@@ -937,33 +881,40 @@ with tab3:
             st.plotly_chart(fig_cat, width='stretch')
 
         with cr:
-            if len(region_filter) > 1:
-                reg_split = fdf.groupby("Region")[selected_cat].sum().reset_index()
-                reg_split["Hours_fmt"] = reg_split[selected_cat].apply(fh)
-                fig_r = px.pie(
-                    reg_split,
-                    names="Region", values=selected_cat,
-                    color="Region", color_discrete_map=REGION_COLORS,
-                    hole=0.45,
-                    title="By Region",
-                    custom_data=["Hours_fmt"],
+            # Source breakdown pie (Jira vs TC)
+            if not _raw_filtered.empty:
+                src_cat_data = (
+                    _raw_filtered[_raw_filtered["category"] == selected_cat]
+                    .groupby("source")["hours"].sum()
+                    .reset_index()
                 )
-                fig_r.update_traces(
-                    textinfo="percent+label",
-                    hovertemplate="<b>%{label}</b><br>%{customdata[0]}<extra></extra>",
-                )
-                fig_r.update_layout(
-                    showlegend=False,
-                    height=260,
-                    margin=dict(t=40, b=0, l=0, r=0),
-                )
-                st.plotly_chart(fig_r, width='stretch')
+                if not src_cat_data.empty:
+                    src_cat_data.columns = ["Source", "Hours"]
+                    src_cat_data["Hours_fmt"] = src_cat_data["Hours"].apply(fh)
+                    fig_src = px.pie(
+                        src_cat_data,
+                        names="Source", values="Hours",
+                        color="Source", color_discrete_map=SOURCE_COLORS,
+                        hole=0.45,
+                        title="By Source",
+                        custom_data=["Hours_fmt"],
+                    )
+                    fig_src.update_traces(
+                        textinfo="percent+label",
+                        hovertemplate="<b>%{label}</b><br>%{customdata[0]}<extra></extra>",
+                    )
+                    fig_src.update_layout(
+                        showlegend=False,
+                        height=260,
+                        margin=dict(t=40, b=0, l=0, r=0),
+                    )
+                    st.plotly_chart(fig_src, width='stretch')
 
             st.markdown("**Top contributors**")
             for _, r in cat_tab.head(5).iterrows():
                 st.markdown(
-                    f"**{r['Name']}** `{r['Region']}`  \n"
-                    f"{fh(r[selected_cat])} · {r['pct_own']:.0f}% of their week"
+                    f"**{r['Name']}**  \n"
+                    f"{fh(r[selected_cat])} · {r['pct_own']:.0f}% of their period"
                 )
                 st.markdown("")
 
@@ -974,18 +925,12 @@ with tab3:
 with tab4:
     st.markdown(f"**{len(fdf)} members** · sorted by total hours")
 
-    if source_filter == "EUC":
-        show_cols = ["Name", "Region", "Total", "EUC"] + active_cats
-    elif source_filter == "TechConnect":
-        show_cols = ["Name", "Region", "Total", "TechConnect"] + active_cats
-    else:  # All
-        show_cols = ["Name", "Region", "Total", "EUC", "TechConnect"] + active_cats
+    show_cols = ["Name", "Total", "Jira", "TC"] + active_cats
 
-    # Sort numerically first, then format for display
     sorted_fdf = fdf.sort_values("Total", ascending=False)
     display_df = sorted_fdf[show_cols].copy()
     for col in show_cols:
-        if col not in ("Name", "Region"):
+        if col != "Name":
             display_df[col] = display_df[col].apply(fh)
 
     st.dataframe(
@@ -995,12 +940,11 @@ with tab4:
         height=min(700, 80 + len(display_df) * 37),
     )
 
-    # Totals row
     if not fdf.empty:
         st.markdown("**Totals**")
-        totals = {"Name": "TOTAL", "Region": "—"}
+        totals = {"Name": "TOTAL"}
         for col in show_cols:
-            if col not in ("Name", "Region"):
+            if col != "Name":
                 totals[col] = fh(fdf[col].sum())
         st.dataframe(
             pd.DataFrame([totals])[show_cols],
@@ -1009,11 +953,10 @@ with tab4:
         )
 
     st.markdown("")
-    # Download (numeric values for CSV)
     csv_data = sorted_fdf[show_cols].copy()
     st.download_button(
         label="⬇️  Download as CSV",
         data=csv_data.to_csv(index=False),
-        file_name=f"EUC_{period_code.replace('–', '_')}.csv",
+        file_name=f"IO_{selected_group.replace(' ', '_')}_{period_code.replace('–', '_')}.csv",
         mime="text/csv",
     )
