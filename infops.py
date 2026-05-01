@@ -654,8 +654,8 @@ elif len(fdf) < len(df):
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────
-tab_dash, tab1, tab2, tab3, tab_sprint = st.tabs(
-    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "📋 Full Table", "🏃 Sprint"]
+tab_dash, tab1, tab2, tab_sprint, tab3 = st.tabs(
+    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "🏃 Sprint", "📋 Full Table"]
 )
 
 
