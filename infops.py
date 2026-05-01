@@ -56,31 +56,47 @@ SOURCE_COLORS = {"Jira": "#3B82F6", "TC": "#10B981"}
 # ── Group configuration ───────────────────────────────────────────────────
 # Maps display group name → Jira project keys + TC JSM team names.
 # tc_team_field secret controls the JQL field (default: "Assigned Group").
-# If your Jira instance uses a different field, set tc_team_field in secrets.
+# "members": optional allowlist — only worklogs from these authors are counted.
+#   Leave empty/omit to include all authors found in those projects.
 GROUPS = OrderedDict([
     ("End User Computing", {
         "jira_keys": ["EUC"],
         "tc_teams":  ["End User Computing", "End User Computing Mexico"],
+        "members": {
+            "Nick Shelton", "Jake Snodgrass", "Matthew Davis", "Khai Nguyen",
+            "Justin Pham", "Nicholas Bowling", "Wes Hurd", "Kenneth Calvert",
+            "Jaylon Martin", "Hector Cossyleon",
+            "Eduardo Rangel Ruiz", "Alonso Renteria Olvera", "Santiago Morales",
+            "Antonio Lopez", "Luis Tejeda Sosa", "Esaú Gallardo", "Esau Gallardo",
+            "Roberto Gaitan Zamudio", "Gabriela Martinez Atriano",
+            "Edgar Aquino Lopez", "Joshua Ramos Dailey", "Mildred Moron Guerrero",
+            "Julian Hoeksema", "Armand Theunis", "Wessel Geest",
+        },
     }),
     ("Identity", {
         "jira_keys": ["ID"],
         "tc_teams":  ["Identity Access Management"],
+        "members":   set(),  # populate when member list is known
     }),
     ("Service Desk", {
         "jira_keys": ["IT"],
         "tc_teams":  ["Service Desk"],
+        "members":   set(),
     }),
     ("Collaboration", {
         "jira_keys": ["COL"],
         "tc_teams":  ["Collaboration Technology"],
+        "members":   set(),
     }),
     ("Systems Engineering", {
         "jira_keys": ["SYS"],
         "tc_teams":  ["System Administration"],
+        "members":   set(),
     }),
     ("Network Services", {
         "jira_keys": ["NET"],
         "tc_teams":  ["Network Administration"],
+        "members":   set(),
     }),
 ])
 
@@ -147,7 +163,7 @@ def _paginate_issues(base_url, auth, headers, jql):
     return issues
 
 
-def _extract_rows(issues, base_url, auth, headers, date_start, date_end, source, default_cat):
+def _extract_rows(issues, base_url, auth, headers, date_start, date_end, source, default_cat, members=None):
     rows = []
     for issue in issues:
         fields     = issue["fields"]
@@ -169,8 +185,11 @@ def _extract_rows(issues, base_url, auth, headers, date_start, date_end, source,
             log_date = wl["started"][:10]
             if not (date_start <= log_date <= date_end):
                 continue
+            author = wl["author"]["displayName"]
+            if members and author not in members:
+                continue
             rows.append({
-                "Name":     wl["author"]["displayName"],
+                "Name":     author,
                 "source":   source,
                 "category": category,
                 "hours":    wl["timeSpentSeconds"] / 3600,
@@ -195,6 +214,7 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
     auth    = (email, token)
     headers = {"Accept": "application/json"}
     cfg     = GROUPS[group_name]
+    members = cfg.get("members") or None  # None = no filter; empty set treated as None
     rows    = []
 
     # Jira project tickets (KTLO/Initiative/Tech Debt by default)
@@ -206,20 +226,21 @@ def fetch_worklogs(date_start: str, date_end: str, group_name: str) -> pd.DataFr
             f'AND worklogDate <= "{date_end}"'
         )
         issues = _paginate_issues(base_url, auth, headers, jql)
-        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "Jira", "KTLO"))
+        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "Jira", "KTLO", members))
 
-    # TC / JSM tickets filtered by team (Svc Req/Incident by default)
-    # worklogDate excluded from TC JQL — combining it with custom fields can return 0 results.
-    # Date filtering is applied in _extract_rows instead.
+    # TC / JSM tickets filtered by team (Svc Req/Incident by default).
+    # worklogDate is NOT used here — combining it with custom field filters returns 0 in some Jira instances.
+    # Use updated >= 30 days before date_start to cast a wide net; date filtering happens in _extract_rows.
     if cfg["tc_teams"]:
-        teams_str = ", ".join(f'"{t}"' for t in cfg["tc_teams"])
+        teams_str  = ", ".join(f'"{t}"' for t in cfg["tc_teams"])
+        lookback   = (date.fromisoformat(date_start) - timedelta(days=30)).strftime("%Y-%m-%d")
         jql = (
             f'project = "TC" '
             f'AND "{tc_team_field}" in ({teams_str}) '
-            f'AND updated >= "{date_start}"'
+            f'AND updated >= "{lookback}"'
         )
         issues = _paginate_issues(base_url, auth, headers, jql)
-        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req"))
+        rows.extend(_extract_rows(issues, base_url, auth, headers, date_start, date_end, "TC", "Svc Req", members))
 
     empty_cols = ["Name", "source", "category", "hours", "date", "issue"]
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
