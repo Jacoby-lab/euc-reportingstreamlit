@@ -3,10 +3,15 @@ import pandas as pd
 import plotly.express as px
 import requests
 from collections import OrderedDict
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
 
 # ── Feature flags ────────────────────────────────────────────────────────
 ENABLE_PERIOD_COMPARISON = True   # set False to disable prev-period delta arrows
+
+# ── Timezone config ───────────────────────────────────────────────────────
+# UTC offset for your local timezone (used for expected-hours target line).
+# CDT (summer) = -5, CST (winter) = -6. Adjust if the target line is off by a day.
+LOCAL_UTC_OFFSET = -5
 
 # ── Page config ───────────────────────────────────────────────────────────
 st.set_page_config(
@@ -479,7 +484,8 @@ def _count_weekdays(start, end):
         d += timedelta(days=1)
     return count
 
-_eff_end       = min(date_end, _today)
+_local_today   = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+_eff_end       = min(date_end, _local_today)
 _expected_days = _count_weekdays(date_start, _eff_end)
 expected_hours = _expected_days * 6
 
