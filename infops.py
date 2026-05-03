@@ -433,6 +433,93 @@ def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
+def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
+    """
+    Fetch all initiative-labeled issues from the group's primary Jira projects.
+    Returns one row per issue with status, estimate, logged hours, and
+    per-member worklog breakdown stored as a dict in 'member_hours'.
+    """
+    try:
+        base_url = st.secrets["jira"]["base_url"].rstrip("/")
+        email    = st.secrets["jira"]["email"]
+        token    = st.secrets["jira"]["api_token"]
+    except KeyError:
+        return pd.DataFrame()
+
+    auth      = (email, token)
+    headers   = {"Accept": "application/json"}
+    cfg       = GROUPS[group_name]
+    jira_keys = cfg.get("jira_keys", [])
+    members   = cfg.get("members") or set()
+    if not jira_keys:
+        return pd.DataFrame()
+
+    keys_str = ", ".join(f'"{k}"' for k in jira_keys)
+    jql      = f'project in ({keys_str}) AND labels in ("initiative","Initiative")'
+
+    # Paginate with extended fields
+    issues, npt = [], None
+    while True:
+        params = {
+            "jql":        jql,
+            "maxResults": 100,
+            "fields":     "summary,status,assignee,timeoriginalestimate,worklog,labels,resolutiondate,created,issuetype",
+        }
+        if npt:
+            params["nextPageToken"] = npt
+        resp = requests.get(
+            f"{base_url}/rest/api/3/search/jql",
+            auth=auth, headers=headers, params=params, timeout=30,
+        )
+        if not resp.ok:
+            break
+        data = resp.json()
+        issues.extend(data.get("issues", []))
+        npt = data.get("nextPageToken")
+        if not npt:
+            break
+
+    rows = []
+    for issue in issues:
+        f        = issue["fields"]
+        assignee = (f.get("assignee") or {}).get("displayName", "Unassigned")
+        status   = (f.get("status")   or {}).get("name", "Unknown")
+        est_h    = (f.get("timeoriginalestimate") or 0) / 3600
+
+        wl_data  = f.get("worklog", {})
+        worklogs = wl_data.get("worklogs", [])
+        if wl_data.get("total", 0) > len(worklogs):
+            wr = requests.get(
+                f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
+                auth=auth, headers=headers, timeout=30,
+            )
+            if wr.ok:
+                worklogs = wr.json().get("worklogs", [])
+
+        member_hours: dict = {}
+        for wl in worklogs:
+            author = wl["author"]["displayName"]
+            if members and author not in members:
+                continue
+            member_hours[author] = member_hours.get(author, 0) + wl["timeSpentSeconds"] / 3600
+
+        rows.append({
+            "key":         issue["key"],
+            "summary":     f.get("summary", ""),
+            "status":      status,
+            "assignee":    assignee,
+            "estimate_h":  est_h,
+            "logged_h":    sum(member_hours.values()),
+            "member_hours": member_hours,
+            "resolved":    (f.get("resolutiondate") or "")[:10],
+            "created":     (f.get("created") or "")[:10],
+            "issue_type":  (f.get("issuetype") or {}).get("name", ""),
+        })
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
     """
     Fetch Jan 1 – today worklogs for the Goal Tracker.
@@ -735,8 +822,8 @@ elif len(fdf) < len(df):
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────
-tab_dash, tab1, tab2, tab_sprint, tab_goal, tab3 = st.tabs(
-    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "🏃 Sprint", "🎯 Goal Tracker", "📋 Full Table"]
+tab_dash, tab1, tab2, tab_init, tab_sprint, tab_goal, tab3 = st.tabs(
+    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "🚀 Initiatives", "🏃 Sprint", "🎯 Goal Tracker", "📋 Full Table"]
 )
 
 
@@ -1433,6 +1520,218 @@ with tab3:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
+# TAB · INITIATIVES
+# ═══════════════════════════════════════════════════════════════════════════
+with tab_init:
+    _DONE_STATUSES = {"done", "closed", "resolved", "complete", "completed", "released"}
+
+    with st.spinner("Loading initiative stories…"):
+        idf = fetch_initiative_issues(selected_group)
+
+    if idf.empty:
+        st.info(
+            f"No initiative-labeled issues found in {selected_group}'s Jira projects "
+            f"({', '.join(GROUPS[selected_group].get('jira_keys', []))}). "
+            "Make sure stories are labeled 'initiative' in Jira."
+        )
+    else:
+        idf["is_done"] = idf["status"].str.lower().isin(_DONE_STATUSES)
+
+        # ── Sidebar-style status filter ──────────────────────────────────
+        _all_statuses = sorted(idf["status"].unique().tolist())
+        _status_filter = st.multiselect(
+            "Filter by status",
+            options=_all_statuses,
+            default=[],
+            placeholder="All statuses",
+        )
+        view = idf[idf["status"].isin(_status_filter)] if _status_filter else idf.copy()
+
+        # ── Summary metrics ──────────────────────────────────────────────
+        _total   = len(idf)
+        _done    = int(idf["is_done"].sum())
+        _wip     = int((~idf["is_done"]).sum())
+        _pct_done = _done / max(_total, 1) * 100
+        _tot_est  = idf["estimate_h"].sum()
+        _tot_log  = idf["logged_h"].sum()
+        _variance = _tot_log - _tot_est
+
+        im0, im1, im2, im3, im4 = st.columns(5)
+        im0.metric("Total Stories",     _total)
+        im1.metric("✅ Completed",       _done)
+        im2.metric("🔄 In Progress",    _wip)
+        im3.metric("Total Estimated",   fh(_tot_est))
+        im4.metric("Total Logged",      fh(_tot_log),
+                   delta=f"{'+' if _variance>=0 else ''}{fh(_variance)}")
+
+        st.divider()
+
+        # ── Top row: status donut + member contribution bar ──────────────
+        left, right = st.columns([1, 2])
+
+        with left:
+            _status_counts = idf["status"].value_counts().reset_index()
+            _status_counts.columns = ["Status", "Count"]
+            _status_counts["color"] = _status_counts["Status"].apply(
+                lambda s: "#10b981" if s.lower() in _DONE_STATUSES
+                else ("#3b82f6" if "progress" in s.lower() or "review" in s.lower()
+                      else "#6b7280")
+            )
+            _sc_map = dict(zip(_status_counts["Status"], _status_counts["color"]))
+            fig_donut = px.pie(
+                _status_counts,
+                names="Status", values="Count",
+                color="Status", color_discrete_map=_sc_map,
+                hole=0.48,
+                title="Stories by Status",
+            )
+            fig_donut.update_traces(
+                textinfo="percent+label",
+                hovertemplate="<b>%{label}</b><br>%{value} stories (%{percent})<extra></extra>",
+            )
+            fig_donut.update_layout(
+                height=360, showlegend=False,
+                margin=dict(t=40, b=0, l=0, r=0),
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_donut, width='stretch')
+
+        with right:
+            # Hours logged per member on initiatives
+            _member_rows = []
+            for _, row in idf.iterrows():
+                for member, hrs in (row["member_hours"] or {}).items():
+                    _member_rows.append({"Name": member, "hours": hrs,
+                                         "done": row["is_done"]})
+            if _member_rows:
+                _mdf = pd.DataFrame(_member_rows)
+                _mdf_agg = (
+                    _mdf.groupby("Name")["hours"].sum()
+                    .reset_index()
+                    .sort_values("hours", ascending=True)
+                )
+                _mdf_agg["hours_fmt"] = _mdf_agg["hours"].apply(fh)
+                fig_mem = px.bar(
+                    _mdf_agg, x="hours", y="Name", orientation="h",
+                    color="hours",
+                    color_continuous_scale=["#1e3a5f", "#3b82f6", "#10b981"],
+                    custom_data=["hours_fmt"],
+                    title="Initiative Hours by Member",
+                    labels={"hours": "Hours logged", "Name": ""},
+                )
+                fig_mem.update_traces(
+                    hovertemplate="<b>%{y}</b><br>%{customdata[0]}<extra></extra>"
+                )
+                fig_mem.update_layout(
+                    height=360, showlegend=False, coloraxis_showscale=False,
+                    margin=dict(t=40, b=20, l=0, r=20),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+                )
+                st.plotly_chart(fig_mem, width='stretch')
+
+        st.divider()
+
+        # ── Completion timeline (resolved by month) ───────────────────────
+        _resolved = idf[idf["is_done"] & (idf["resolved"] != "")].copy()
+        if not _resolved.empty:
+            _resolved["month"] = _resolved["resolved"].str[:7]
+            _monthly = (
+                _resolved.groupby("month")
+                .agg(stories=("key", "count"), hours=("logged_h", "sum"))
+                .reset_index()
+            )
+            _monthly["hours_fmt"] = _monthly["hours"].apply(fh)
+            fig_timeline = px.bar(
+                _monthly, x="month", y="stories",
+                color="hours",
+                color_continuous_scale=["#1e3a5f", "#10b981"],
+                custom_data=["hours_fmt"],
+                title="Completed Stories by Month",
+                labels={"month": "", "stories": "Stories completed", "hours": "Hours logged"},
+            )
+            fig_timeline.update_traces(
+                hovertemplate="<b>%{x}</b><br>%{y} stories · %{customdata[0]} logged<extra></extra>"
+            )
+            fig_timeline.update_layout(
+                height=260, coloraxis_showscale=False,
+                margin=dict(t=40, b=20, l=0, r=20),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+            )
+            st.plotly_chart(fig_timeline, width='stretch')
+            st.divider()
+
+        # ── Story detail table ────────────────────────────────────────────
+        st.markdown(f"#### Initiative Stories ({len(view)} shown)")
+
+        _jira_base = st.secrets.get("jira", {}).get("base_url", "").rstrip("/")
+        _tbl = view[["key", "summary", "status", "assignee",
+                      "estimate_h", "logged_h", "resolved"]].copy()
+        _tbl["estimate_h"] = _tbl["estimate_h"].apply(fh)
+        _tbl["logged_h"]   = _tbl["logged_h"].apply(fh)
+        _tbl["variance"]   = view.apply(
+            lambda r: f"{'+' if r['logged_h']>=r['estimate_h'] else ''}{fh(r['logged_h']-r['estimate_h'])}",
+            axis=1,
+        )
+
+        _status_color_map = {
+            s: ("🟢" if s.lower() in _DONE_STATUSES
+                else ("🔵" if "progress" in s.lower() or "review" in s.lower()
+                      else "⚪"))
+            for s in idf["status"].unique()
+        }
+        _tbl["Status"] = _tbl["status"].map(_status_color_map) + " " + _tbl["status"]
+
+        st.dataframe(
+            _tbl[["key", "summary", "Status", "assignee",
+                  "estimate_h", "logged_h", "variance", "resolved"]],
+            use_container_width=True,
+            hide_index=True,
+            height=min(700, 80 + len(_tbl) * 37),
+            column_config={
+                "key":        st.column_config.LinkColumn(
+                    "Issue",
+                    display_text=r"([A-Z]+-\d+)",
+                ) if _jira_base else st.column_config.TextColumn("Issue"),
+                "summary":    st.column_config.TextColumn("Summary",  width="large"),
+                "Status":     st.column_config.TextColumn("Status",   width="medium"),
+                "assignee":   st.column_config.TextColumn("Assignee", width="medium"),
+                "estimate_h": "Estimated",
+                "logged_h":   "Logged",
+                "variance":   "Variance",
+                "resolved":   "Resolved",
+            },
+        )
+
+        # ── Per-story member breakdown expander ───────────────────────────
+        with st.expander("👤 Per-story member breakdown", expanded=False):
+            _detail_rows = []
+            for _, row in view.iterrows():
+                for member, hrs in (row["member_hours"] or {}).items():
+                    if hrs > 0:
+                        _detail_rows.append({
+                            "Issue":   row["key"],
+                            "Summary": row["summary"][:60] + ("…" if len(row["summary"]) > 60 else ""),
+                            "Status":  row["status"],
+                            "Member":  member,
+                            "Logged":  fh(hrs),
+                        })
+            if _detail_rows:
+                st.dataframe(
+                    pd.DataFrame(_detail_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=min(500, 80 + len(_detail_rows) * 37),
+                )
+            else:
+                st.info("No logged hours on initiative stories for this group's members.")
+
+
 # TAB 4 · SPRINT
 # ═══════════════════════════════════════════════════════════════════════════
 with tab_sprint:
