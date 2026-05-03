@@ -91,7 +91,7 @@ GROUPS = OrderedDict([
             "Justin Pham", "Nicholas Bowling", "Wes Hurd", "Kenneth Calvert",
             "Jaylon Martin", "Hector Cossyleon",
             "Eduardo Rangel Ruiz", "Alonso Renteria Olvera", "Santiago Morales",
-            "Antonio Lopez", "Luis Tejeda Sosa", "Esaú Gallardo", "Esau Gallardo",
+            "Antonio Lopez", "Esaú Gallardo", "Esau Gallardo",
             "Roberto Gaitan Zamudio", "Gabriela Martinez Atriano",
             "Edgar Aquino Lopez", "Joshua Ramos Dailey", "Mildred Moron Guerrero",
             "Julian Hoeksema", "Armand Theunis", "Wessel Geest",
