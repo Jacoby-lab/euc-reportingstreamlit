@@ -1588,14 +1588,14 @@ with tab_init:
 
         _epics = (
             idf[idf["epic_key"] != ""]
-            .groupby(["epic_key", "epic_summary", "epic_assignee", "epic_est_h"])
+            .groupby(["epic_key", "epic_summary", "epic_assignee"])
             .agg(
+                estimate_h=("estimate_h", "sum"),   # sum of child story estimates
                 logged_h=("logged_h", "sum"),
                 total_stories=("key", "count"),
                 done_stories=("is_done", "sum"),
             )
             .reset_index()
-            .rename(columns={"epic_est_h": "estimate_h"})
             .sort_values("logged_h", ascending=False)
         )
 
