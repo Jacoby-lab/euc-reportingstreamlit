@@ -434,9 +434,12 @@ def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
     """
-    Fetch Jan 1 – today worklogs for the Goal Tracker, month by month.
-    Fetching one month at a time avoids Jira's 5000-issue-per-query hard limit
-    and uses exact worklogDate ranges (reliable for current year).
+    Fetch Jan 1 – today worklogs for the Goal Tracker.
+
+    Strategy: one query PER PROJECT KEY so each result set stays well under
+    Jira Cloud's hard 5000-issue limit.  Uses the same proven JQL pattern as
+    fetch_worklogs (worklogDate OR updated >= start) so no worklogs are missed.
+    De-duplicates worklog rows by (issue, date, Name, hours) after combining.
     """
     try:
         base_url = st.secrets["jira"]["base_url"].rstrip("/")
@@ -445,46 +448,39 @@ def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
     except KeyError:
         return pd.DataFrame()
 
-    auth      = (email, token)
-    headers   = {"Accept": "application/json"}
-    cfg       = GROUPS[group_name]
-    members   = cfg.get("members") or set()
+    auth    = (email, token)
+    headers = {"Accept": "application/json"}
+    cfg     = GROUPS[group_name]
+    members = cfg.get("members") or set()
     if not members:
         return pd.DataFrame()
 
     jira_keys   = set(cfg.get("jira_keys", []))
-    authors_str = ", ".join(f'"{m}"' for m in members)
-    _today      = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+    all_projects = list(jira_keys) + list(cfg.get("cross_projects", []))
+    authors_str  = ", ".join(f'"{m}"' for m in members)
+    _today       = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+    date_start_s = "2026-01-01"
+    date_end_s   = _today.strftime("%Y-%m-%d")
 
     all_rows = []
-    month    = date(2026, 1, 1)
+    seen_keys: set = set()  # deduplicate worklog rows across project queries
 
-    while month.year == 2026 and month <= _today:
-        m_start = month
-        # Last day of month, capped at today
-        _next_m = (month.replace(day=28) + timedelta(days=4))
-        m_last  = _next_m - timedelta(days=_next_m.day)
-        m_end   = min(m_last, _today)
-
-        m_start_s = m_start.strftime("%Y-%m-%d")
-        m_end_s   = m_end.strftime("%Y-%m-%d")
-
+    for proj in all_projects:
         jql = (
-            f'worklogAuthor in ({authors_str}) '
-            f'AND worklogDate >= "{m_start_s}" '
-            f'AND worklogDate <= "{m_end_s}"'
+            f'project = "{proj}" '
+            f'AND worklogAuthor in ({authors_str}) '
+            f'AND (worklogDate >= "{date_start_s}" OR updated >= "{date_start_s}")'
         )
         issues = _paginate_issues(base_url, auth, headers, jql)
         rows   = _extract_rows(
             issues, base_url, auth, headers,
-            m_start_s, m_end_s, members, jira_keys,
+            date_start_s, date_end_s, members, jira_keys,
         )
-        all_rows.extend(rows)
-
-        # Advance to first day of next month
-        month = (_next_m - timedelta(days=_next_m.day - 1)).replace(day=1)
-        month = (month.replace(day=28) + timedelta(days=4))
-        month = month - timedelta(days=month.day - 1)
+        for row in rows:
+            key = (row["issue"], row["date"], row["Name"], round(row["hours"], 4))
+            if key not in seen_keys:
+                seen_keys.add(key)
+                all_rows.append(row)
 
     empty_cols = ["Name", "source", "category", "hours", "date", "issue"]
     return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(columns=empty_cols)
