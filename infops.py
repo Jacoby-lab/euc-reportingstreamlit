@@ -431,6 +431,65 @@ def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
+    """
+    Fetch Jan 1 – today worklogs for the Goal Tracker, month by month.
+    Fetching one month at a time avoids Jira's 5000-issue-per-query hard limit
+    and uses exact worklogDate ranges (reliable for current year).
+    """
+    try:
+        base_url = st.secrets["jira"]["base_url"].rstrip("/")
+        email    = st.secrets["jira"]["email"]
+        token    = st.secrets["jira"]["api_token"]
+    except KeyError:
+        return pd.DataFrame()
+
+    auth      = (email, token)
+    headers   = {"Accept": "application/json"}
+    cfg       = GROUPS[group_name]
+    members   = cfg.get("members") or set()
+    if not members:
+        return pd.DataFrame()
+
+    jira_keys   = set(cfg.get("jira_keys", []))
+    authors_str = ", ".join(f'"{m}"' for m in members)
+    _today      = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+
+    all_rows = []
+    month    = date(2026, 1, 1)
+
+    while month.year == 2026 and month <= _today:
+        m_start = month
+        # Last day of month, capped at today
+        _next_m = (month.replace(day=28) + timedelta(days=4))
+        m_last  = _next_m - timedelta(days=_next_m.day)
+        m_end   = min(m_last, _today)
+
+        m_start_s = m_start.strftime("%Y-%m-%d")
+        m_end_s   = m_end.strftime("%Y-%m-%d")
+
+        jql = (
+            f'worklogAuthor in ({authors_str}) '
+            f'AND worklogDate >= "{m_start_s}" '
+            f'AND worklogDate <= "{m_end_s}"'
+        )
+        issues = _paginate_issues(base_url, auth, headers, jql)
+        rows   = _extract_rows(
+            issues, base_url, auth, headers,
+            m_start_s, m_end_s, members, jira_keys,
+        )
+        all_rows.extend(rows)
+
+        # Advance to first day of next month
+        month = (_next_m - timedelta(days=_next_m.day - 1)).replace(day=1)
+        month = (month.replace(day=28) + timedelta(days=4))
+        month = month - timedelta(days=month.day - 1)
+
+    empty_cols = ["Name", "source", "category", "hours", "date", "issue"]
+    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(columns=empty_cols)
+
+
 def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
     """Aggregate raw worklog rows into per-person summary."""
     src_cols = ["Jira", "TC"]
@@ -1136,11 +1195,9 @@ with tab_goal:
         "On Track = within 10% of expected pace."
     )
 
-    # Fetch goal-period data (fixed Apr 1 → today, independent of sidebar range)
-    _goal_start_s = _GOAL_START.strftime("%Y-%m-%d")
-    _goal_end_s   = _goal_fetch_end.strftime("%Y-%m-%d")
-    with st.spinner("Loading 2026 goal data…"):
-        _goal_raw = fetch_worklogs(_goal_start_s, _goal_end_s, selected_group)
+    # Fetch goal-period data month-by-month (avoids Jira's 5000-issue-per-query limit)
+    with st.spinner("Loading 2026 goal data (fetching month by month for accuracy)…"):
+        _goal_raw = fetch_ytd_goal_data(selected_group)
         _goal_df  = build_summary_df(_goal_raw)
 
     # Build per-member rows (include all configured members, even those with 0h logged)
