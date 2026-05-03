@@ -1718,7 +1718,7 @@ with tab_init:
         st.divider()
 
         # ── Completion timeline (resolved by month) ───────────────────────
-        _resolved = idf[idf["is_done"] & (idf["resolved"] != "")].copy()
+        _resolved = idf[idf["is_done"] & (idf["resolved"] >= "2026-01-01")].copy()
         if not _resolved.empty:
             _resolved["month"] = _resolved["resolved"].str[:7]
             _monthly = (
@@ -1791,28 +1791,6 @@ with tab_init:
             },
         )
 
-        # ── Per-story member breakdown expander ───────────────────────────
-        with st.expander("👤 Per-story member breakdown", expanded=False):
-            _detail_rows = []
-            for _, row in view.iterrows():
-                for member, hrs in (row["member_hours"] or {}).items():
-                    if hrs > 0:
-                        _detail_rows.append({
-                            "Issue":   row["key"],
-                            "Summary": row["summary"][:60] + ("…" if len(row["summary"]) > 60 else ""),
-                            "Status":  row["status"],
-                            "Member":  member,
-                            "Logged":  fh(hrs),
-                        })
-            if _detail_rows:
-                st.dataframe(
-                    pd.DataFrame(_detail_rows),
-                    use_container_width=True,
-                    hide_index=True,
-                    height=min(500, 80 + len(_detail_rows) * 37),
-                )
-            else:
-                st.info("No logged hours on initiative stories for this group's members.")
 
 
 # TAB 4 · SPRINT
