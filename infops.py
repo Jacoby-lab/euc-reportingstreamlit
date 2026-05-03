@@ -463,7 +463,7 @@ def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
         params = {
             "jql":        jql,
             "maxResults": 100,
-            "fields":     "summary,status,assignee,timeoriginalestimate,worklog,labels,resolutiondate,created,issuetype",
+            "fields":     "summary,status,assignee,timeoriginalestimate,worklog,labels,resolutiondate,created,issuetype,parent",
         }
         if npt:
             params["nextPageToken"] = npt
@@ -503,17 +503,20 @@ def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
                 continue
             member_hours[author] = member_hours.get(author, 0) + wl["timeSpentSeconds"] / 3600
 
+        _parent     = f.get("parent") or {}
         rows.append({
-            "key":         issue["key"],
-            "summary":     f.get("summary", ""),
-            "status":      status,
-            "assignee":    assignee,
-            "estimate_h":  est_h,
-            "logged_h":    sum(member_hours.values()),
+            "key":          issue["key"],
+            "summary":      f.get("summary", ""),
+            "status":       status,
+            "assignee":     assignee,
+            "estimate_h":   est_h,
+            "logged_h":     sum(member_hours.values()),
             "member_hours": member_hours,
-            "resolved":    (f.get("resolutiondate") or "")[:10],
-            "created":     (f.get("created") or "")[:10],
-            "issue_type":  (f.get("issuetype") or {}).get("name", ""),
+            "resolved":     (f.get("resolutiondate") or "")[:10],
+            "created":      (f.get("created") or "")[:10],
+            "issue_type":   (f.get("issuetype") or {}).get("name", ""),
+            "epic_key":     _parent.get("key", ""),
+            "epic_summary": (_parent.get("fields") or {}).get("summary", ""),
         })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
@@ -1537,16 +1540,68 @@ with tab_init:
         )
     else:
         idf["is_done"] = idf["status"].str.lower().isin(_DONE_STATUSES)
+        view = idf.copy()
 
-        # ── Sidebar-style status filter ──────────────────────────────────
-        _all_statuses = sorted(idf["status"].unique().tolist())
-        _status_filter = st.multiselect(
-            "Filter by status",
-            options=_all_statuses,
-            default=[],
-            placeholder="All statuses",
+        # ── Epic progress cards ──────────────────────────────────────────
+        st.markdown("#### Epics at a Glance")
+        st.caption("Estimated vs logged hours per epic · % = logged ÷ estimated")
+
+        _epics = (
+            idf[idf["epic_key"] != ""]
+            .groupby(["epic_key", "epic_summary"])
+            .agg(
+                estimate_h=("estimate_h", "sum"),
+                logged_h=("logged_h", "sum"),
+                total_stories=("key", "count"),
+                done_stories=("is_done", "sum"),
+            )
+            .reset_index()
+            .sort_values("logged_h", ascending=False)
         )
-        view = idf[idf["status"].isin(_status_filter)] if _status_filter else idf.copy()
+        _no_epic = idf[idf["epic_key"] == ""]
+        if not _no_epic.empty:
+            _standalone = pd.DataFrame([{
+                "epic_key": "—",
+                "epic_summary": "No Epic / Standalone",
+                "estimate_h": _no_epic["estimate_h"].sum(),
+                "logged_h":   _no_epic["logged_h"].sum(),
+                "total_stories": len(_no_epic),
+                "done_stories":  int(_no_epic["is_done"].sum()),
+            }])
+            _epics = pd.concat([_epics, _standalone], ignore_index=True)
+
+        if _epics.empty:
+            st.info("No epic grouping found — stories may not have parent epics in Jira.")
+        else:
+            _ecols = st.columns(min(len(_epics), 3))
+            for idx, (_, ep) in enumerate(_epics.iterrows()):
+                est   = ep["estimate_h"]
+                log   = ep["logged_h"]
+                pct   = min(log / max(est, 1) * 100, 150)
+                bar   = min(pct, 100)
+                done  = int(ep["done_stories"])
+                total = int(ep["total_stories"])
+                color = "#10b981" if pct >= 90 else ("#f59e0b" if pct >= 50 else "#3b82f6")
+                label = ep["epic_summary"] or ep["epic_key"]
+                with _ecols[idx % 3]:
+                    st.markdown(f"""
+<div style="border:1px solid #21262d;border-radius:10px;padding:14px 16px;margin-bottom:12px;background:#0d1117;">
+  <div style="font-size:0.78rem;color:#9ca3af;font-weight:600;margin-bottom:4px;
+       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="{label}">
+    {ep['epic_key'] if ep['epic_key'] != '—' else ''}
+    {'&nbsp;·&nbsp;' if ep['epic_key'] not in ('', '—') else ''}
+    {label[:48] + ('…' if len(label)>48 else '')}
+  </div>
+  <div style="font-size:1.6rem;font-weight:800;color:{color};">{pct:.0f}%</div>
+  <div style="font-size:0.82rem;color:#9ca3af;margin-bottom:8px;">
+    {fh(log)} logged&nbsp;·&nbsp;{fh(est)} estimated&nbsp;·&nbsp;{done}/{total} done
+  </div>
+  <div style="width:100%;background:rgba(255,255,255,0.08);border-radius:999px;height:7px;">
+    <div style="width:{bar:.1f}%;background:{color};border-radius:999px;height:7px;"></div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+        st.divider()
 
         # ── Summary metrics ──────────────────────────────────────────────
         _total   = len(idf)
