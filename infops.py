@@ -654,8 +654,8 @@ elif len(fdf) < len(df):
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────
-tab_dash, tab1, tab2, tab_sprint, tab3 = st.tabs(
-    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "🏃 Sprint", "📋 Full Table"]
+tab_dash, tab1, tab2, tab_sprint, tab_goal, tab3 = st.tabs(
+    ["🏢 Dashboard", "📊 Overview", "🏷️ By Label", "🏃 Sprint", "🎯 Goal Tracker", "📋 Full Table"]
 )
 
 
@@ -1106,6 +1106,208 @@ with tab2:
                 margin=dict(t=40, r=60, b=20, l=0),
             )
             st.plotly_chart(fig_pct, width='stretch')
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAB 5 · GOAL TRACKER  (Apr 1 – Dec 31 2026, 1,250h annual goal)
+# ═══════════════════════════════════════════════════════════════════════════
+with tab_goal:
+    _GOAL_START   = date(2026, 4, 1)
+    _GOAL_END     = date(2026, 12, 31)
+    _ANNUAL_GOAL  = 1250.0   # Warren's 2026 target
+    _DAILY_TARGET = 6.0      # hours per workday
+
+    _local_today_g  = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+    _goal_fetch_end = min(_GOAL_END, _local_today_g)
+
+    _total_wd    = _count_weekdays(_GOAL_START, _GOAL_END)
+    _elapsed_wd  = _count_weekdays(_GOAL_START, _goal_fetch_end) if _goal_fetch_end >= _GOAL_START else 0
+    _remaining_wd = max(_total_wd - _elapsed_wd, 0)
+    _expected_to_date = _elapsed_wd * _DAILY_TARGET
+
+    st.markdown("### 🎯 2026 Time Tracking Goal")
+    st.markdown(
+        f"Track progress toward **1,250 logged hours** by Dec 31, 2026 · "
+        f"**6h/workday** · Apr 1 – Dec 31, 2026 &nbsp;·&nbsp; "
+        f"**{_elapsed_wd}** workdays elapsed &nbsp;·&nbsp; **{_remaining_wd}** remaining"
+    )
+    st.caption(
+        "Projected year-end total = current daily rate × remaining workdays + hours logged so far. "
+        "On Track = within 10% of expected pace."
+    )
+
+    # Fetch goal-period data (fixed Apr 1 → today, independent of sidebar range)
+    _goal_start_s = _GOAL_START.strftime("%Y-%m-%d")
+    _goal_end_s   = _goal_fetch_end.strftime("%Y-%m-%d")
+    with st.spinner("Loading 2026 goal data…"):
+        _goal_raw = fetch_worklogs(_goal_start_s, _goal_end_s, selected_group)
+        _goal_df  = build_summary_df(_goal_raw)
+
+    # Build per-member rows (include all configured members, even those with 0h logged)
+    _members_list  = sorted(GROUPS[selected_group].get("members", set()))
+    _goal_members  = pd.DataFrame({"Name": _members_list})
+    if not _goal_df.empty:
+        _goal_members = _goal_members.merge(
+            _goal_df[["Name", "Total"]], on="Name", how="left"
+        ).fillna(0)
+    else:
+        _goal_members["Total"] = 0.0
+
+    _goal_members = _goal_members.rename(columns={"Total": "logged_h"})
+    _goal_members["expected_h"]  = _expected_to_date
+    _goal_members["surplus_h"]   = _goal_members["logged_h"] - _expected_to_date
+
+    if _elapsed_wd > 0:
+        _goal_members["daily_rate"]  = _goal_members["logged_h"] / _elapsed_wd
+        _goal_members["projected_h"] = (
+            _goal_members["logged_h"] + _goal_members["daily_rate"] * _remaining_wd
+        )
+    else:
+        _goal_members["daily_rate"]  = 0.0
+        _goal_members["projected_h"] = 0.0
+
+    # "On track" = logged >= 90% of expected-to-date
+    _goal_members["on_track"] = (
+        _goal_members["logged_h"] >= (_expected_to_date * 0.9)
+        if _expected_to_date > 0
+        else True
+    )
+    # Hours still needed per remaining workday to hit 1,250h
+    _goal_members["h_per_day_needed"] = (
+        (_ANNUAL_GOAL - _goal_members["logged_h"]) / (_remaining_wd or 1)
+    ).clip(lower=0)
+
+    _goal_members = _goal_members.sort_values("logged_h", ascending=False)
+
+    # ── Summary metrics ─────────────────────────────────────────────────────
+    _g_logged   = _goal_members["logged_h"].sum()
+    _g_expected = _expected_to_date * len(_goal_members)
+    _g_on_track = int(_goal_members["on_track"].sum())
+    _g_at_risk  = int((~_goal_members["on_track"]).sum())
+    _g_pct      = _g_logged / max(_g_expected, 1) * 100
+
+    gm0, gm1, gm2, gm3, gm4 = st.columns(5)
+    gm0.metric("Group Total Logged",    fh(_g_logged))
+    gm1.metric("Expected to Date",      fh(_g_expected))
+    gm2.metric("Workdays Elapsed",      _elapsed_wd)
+    gm3.metric("✅ On Track",           _g_on_track)
+    gm4.metric("⚠️ Behind Pace",        _g_at_risk)
+
+    # ── At-risk banner ──────────────────────────────────────────────────────
+    _at_risk_names = _goal_members[~_goal_members["on_track"]]["Name"].tolist()
+    if _at_risk_names:
+        st.error(
+            f"⚠️ **Behind pace ({len(_at_risk_names)} member{'s' if len(_at_risk_names)>1 else ''}):** "
+            + " · ".join(_at_risk_names)
+        )
+    elif _elapsed_wd > 0:
+        st.success("✅ All members are on pace for the 1,250h annual goal.")
+
+    st.divider()
+
+    # ── Per-member progress cards ───────────────────────────────────────────
+    st.markdown("#### Member Progress")
+
+    for _, row in _goal_members.iterrows():
+        logged    = row["logged_h"]
+        surplus   = row["surplus_h"]
+        projected = row["projected_h"]
+        on_track  = row["on_track"]
+        need_pd   = row["h_per_day_needed"]
+
+        pct_pace  = (logged / max(_expected_to_date, 1) * 100) if _expected_to_date > 0 else 0
+        bar_pct   = min(pct_pace, 100)
+
+        if on_track:
+            _card_bg    = "#0a1f14"
+            _card_border = "#1a3a2a"
+            _color       = "#10b981"
+            _status_icon = "✅"
+        elif pct_pace >= 75:
+            _card_bg     = "#1c1507"
+            _card_border = "#3a2e0a"
+            _color       = "#f59e0b"
+            _status_icon = "⚠️"
+        else:
+            _card_bg     = "#1f0a0a"
+            _card_border = "#3a1a1a"
+            _color       = "#ef4444"
+            _status_icon = "🔴"
+
+        surplus_str   = (f"+{fh(surplus)}" if surplus >= 0 else f"−{fh(abs(surplus))}")
+        projected_str = fh(projected) if _elapsed_wd > 0 else "—"
+        pace_label    = f"{pct_pace:.0f}% of pace" if _expected_to_date > 0 else "Goal period not started"
+
+        st.markdown(f"""
+<div style="border:1px solid {_card_border};border-radius:10px;padding:14px 18px;margin-bottom:10px;background:{_card_bg};">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <span style="font-size:0.95rem;font-weight:700;color:#e6edf3;">{_status_icon} {row['Name']}</span>
+    <span style="font-size:0.82rem;color:#9ca3af;">Need <b style="color:{_color}">{need_pd:.1f}h/day</b> remaining to hit 1,250h</span>
+  </div>
+  <div style="display:flex;gap:24px;margin-bottom:10px;flex-wrap:wrap;align-items:baseline;">
+    <span style="font-size:1.15rem;font-weight:800;color:#fff;">Logged: <span style="color:{_color}">{fh(logged)}</span></span>
+    <span style="color:#9ca3af;font-size:0.88rem;">Expected: {fh(_expected_to_date)}</span>
+    <span style="color:#9ca3af;font-size:0.88rem;">Δ <span style="color:{_color};font-weight:600">{surplus_str}</span></span>
+    <span style="color:#9ca3af;font-size:0.88rem;">Projected EOY: <span style="color:{_color};font-weight:600">{projected_str}</span></span>
+  </div>
+  <div style="width:100%;background:rgba(255,255,255,0.08);border-radius:999px;height:9px;position:relative;">
+    <div style="width:{bar_pct:.1f}%;background:{_color};border-radius:999px;height:9px;"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin-top:4px;">
+    <span style="font-size:0.72rem;color:#6b7280;">{pace_label}</span>
+    <span style="font-size:0.72rem;color:#6b7280;">1,250h annual goal</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Projected EOY chart ────────────────────────────────────────────────
+    if _elapsed_wd > 0:
+        st.divider()
+        st.markdown("#### Projected Year-End Totals")
+
+        _proj_df = _goal_members[["Name", "logged_h", "projected_h", "on_track"]].copy()
+        _proj_df["projected_fmt"] = _proj_df["projected_h"].apply(fh)
+        _proj_df["logged_fmt"]    = _proj_df["logged_h"].apply(fh)
+
+        fig_proj = px.bar(
+            _proj_df.sort_values("projected_h"),
+            x="projected_h", y="Name",
+            orientation="h",
+            color="on_track",
+            color_discrete_map={True: "#10b981", False: "#ef4444"},
+            labels={"projected_h": "Projected Hours (EOY)", "Name": "", "on_track": "On Track"},
+            custom_data=["projected_fmt", "logged_fmt"],
+        )
+        fig_proj.add_vline(
+            x=_ANNUAL_GOAL,
+            line_color="rgba(255,215,0,0.65)",
+            line_dash="dash",
+            line_width=2,
+            annotation_text="1,250h Goal",
+            annotation_position="top",
+            annotation_font_color="rgba(255,215,0,0.8)",
+            annotation_font_size=12,
+        )
+        fig_proj.update_traces(
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Projected EOY: %{customdata[0]}<br>"
+                "Logged so far: %{customdata[1]}"
+                "<extra></extra>"
+            )
+        )
+        fig_proj.update_layout(
+            height=max(360, len(_proj_df) * 44),
+            margin=dict(t=30, b=20, l=0, r=20),
+            legend=dict(
+                title="On Track",
+                orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+            ),
+            xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_proj, width='stretch')
 
 
 # ═══════════════════════════════════════════════════════════════════════════
