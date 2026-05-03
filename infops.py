@@ -432,12 +432,59 @@ def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
+def _paginate_jql(base_url, auth, headers, jql, fields) -> list:
+    """Generic paginator — returns all issues for a JQL query with given fields."""
+    issues, npt = [], None
+    while True:
+        params = {"jql": jql, "maxResults": 100, "fields": fields}
+        if npt:
+            params["nextPageToken"] = npt
+        resp = requests.get(
+            f"{base_url}/rest/api/3/search/jql",
+            auth=auth, headers=headers, params=params, timeout=30,
+        )
+        if not resp.ok:
+            break
+        data = resp.json()
+        issues.extend(data.get("issues", []))
+        npt = data.get("nextPageToken")
+        if not npt:
+            break
+    return issues
+
+
+def _extract_worklogs(issue, base_url, auth, headers, members) -> dict:
+    """Return {author: hours} for member worklogs on an issue."""
+    f        = issue["fields"]
+    wl_data  = f.get("worklog", {})
+    worklogs = wl_data.get("worklogs", [])
+    if wl_data.get("total", 0) > len(worklogs):
+        wr = requests.get(
+            f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
+            auth=auth, headers=headers, timeout=30,
+        )
+        if wr.ok:
+            worklogs = wr.json().get("worklogs", [])
+    out: dict = {}
+    for wl in worklogs:
+        author = wl["author"]["displayName"]
+        if members and author not in members:
+            continue
+        out[author] = out.get(author, 0) + wl["timeSpentSeconds"] / 3600
+    return out
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
     """
-    Fetch all initiative-labeled issues from the group's primary Jira projects.
-    Returns one row per issue with status, estimate, logged hours, and
-    per-member worklog breakdown stored as a dict in 'member_hours'.
+    Fetch 2026H1 initiative epics + all child stories.
+
+    Flow:
+      1. Query epics: issuetype=Epic AND labels=2026H1 in the group's Jira projects
+      2. For each epic batch, query child stories via parent in (epic_keys)
+      3. Extract member worklogs from child stories
+      4. Return story-level rows with epic_key / epic_summary / epic_assignee columns
+         so the tab can group by epic for the progress cards.
     """
     try:
         base_url = st.secrets["jira"]["base_url"].rstrip("/")
@@ -455,68 +502,61 @@ def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     keys_str = ", ".join(f'"{k}"' for k in jira_keys)
-    jql      = f'project in ({keys_str}) AND labels in ("initiative","Initiative") AND labels = "2026H1"'
 
-    # Paginate with extended fields
-    issues, npt = [], None
-    while True:
-        params = {
-            "jql":        jql,
-            "maxResults": 100,
-            "fields":     "summary,status,assignee,timeoriginalestimate,worklog,labels,resolutiondate,created,issuetype,parent",
+    # ── Step 1: fetch epics ──────────────────────────────────────────────
+    epic_jql    = f'project in ({keys_str}) AND issuetype = Epic AND labels = "2026H1"'
+    epic_issues = _paginate_jql(base_url, auth, headers, epic_jql,
+                                "summary,assignee,timeoriginalestimate,status")
+
+    if not epic_issues:
+        return pd.DataFrame()
+
+    # Build epic metadata lookup
+    epic_meta: dict = {}   # key → {summary, assignee, estimate_h, status}
+    for ep in epic_issues:
+        f = ep["fields"]
+        epic_meta[ep["key"]] = {
+            "epic_summary":  f.get("summary", ""),
+            "epic_assignee": (f.get("assignee") or {}).get("displayName", "Unassigned"),
+            "epic_est_h":    (f.get("timeoriginalestimate") or 0) / 3600,
+            "epic_status":   (f.get("status") or {}).get("name", ""),
         }
-        if npt:
-            params["nextPageToken"] = npt
-        resp = requests.get(
-            f"{base_url}/rest/api/3/search/jql",
-            auth=auth, headers=headers, params=params, timeout=30,
-        )
-        if not resp.ok:
-            break
-        data = resp.json()
-        issues.extend(data.get("issues", []))
-        npt = data.get("nextPageToken")
-        if not npt:
-            break
 
+    # ── Step 2: fetch child stories in batches of 50 epics ──────────────
+    epic_keys  = list(epic_meta.keys())
+    all_stories: list = []
+    for i in range(0, len(epic_keys), 50):
+        batch     = epic_keys[i : i + 50]
+        batch_str = ", ".join(f'"{k}"' for k in batch)
+        story_jql = f'parent in ({batch_str}) ORDER BY status ASC'
+        stories   = _paginate_jql(base_url, auth, headers, story_jql,
+                                  "summary,status,assignee,timeoriginalestimate,worklog,resolutiondate,created,issuetype,parent")
+        all_stories.extend(stories)
+
+    # ── Step 3: build story rows ─────────────────────────────────────────
     rows = []
-    for issue in issues:
-        f        = issue["fields"]
-        assignee = (f.get("assignee") or {}).get("displayName", "Unassigned")
-        status   = (f.get("status")   or {}).get("name", "Unknown")
-        est_h    = (f.get("timeoriginalestimate") or 0) / 3600
+    for issue in all_stories:
+        f            = issue["fields"]
+        parent_key   = (f.get("parent") or {}).get("key", "")
+        ep           = epic_meta.get(parent_key, {})
+        member_hours = _extract_worklogs(issue, base_url, auth, headers, members)
 
-        wl_data  = f.get("worklog", {})
-        worklogs = wl_data.get("worklogs", [])
-        if wl_data.get("total", 0) > len(worklogs):
-            wr = requests.get(
-                f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
-                auth=auth, headers=headers, timeout=30,
-            )
-            if wr.ok:
-                worklogs = wr.json().get("worklogs", [])
-
-        member_hours: dict = {}
-        for wl in worklogs:
-            author = wl["author"]["displayName"]
-            if members and author not in members:
-                continue
-            member_hours[author] = member_hours.get(author, 0) + wl["timeSpentSeconds"] / 3600
-
-        _parent     = f.get("parent") or {}
         rows.append({
-            "key":          issue["key"],
-            "summary":      f.get("summary", ""),
-            "status":       status,
-            "assignee":     assignee,
-            "estimate_h":   est_h,
-            "logged_h":     sum(member_hours.values()),
-            "member_hours": member_hours,
-            "resolved":     (f.get("resolutiondate") or "")[:10],
-            "created":      (f.get("created") or "")[:10],
-            "issue_type":   (f.get("issuetype") or {}).get("name", ""),
-            "epic_key":     _parent.get("key", ""),
-            "epic_summary": (_parent.get("fields") or {}).get("summary", ""),
+            "key":           issue["key"],
+            "summary":       f.get("summary", ""),
+            "status":        (f.get("status") or {}).get("name", "Unknown"),
+            "assignee":      (f.get("assignee") or {}).get("displayName", "Unassigned"),
+            "estimate_h":    (f.get("timeoriginalestimate") or 0) / 3600,
+            "logged_h":      sum(member_hours.values()),
+            "member_hours":  member_hours,
+            "resolved":      (f.get("resolutiondate") or "")[:10],
+            "created":       (f.get("created") or "")[:10],
+            "issue_type":    (f.get("issuetype") or {}).get("name", ""),
+            "epic_key":      parent_key,
+            "epic_summary":  ep.get("epic_summary", ""),
+            "epic_assignee": ep.get("epic_assignee", ""),
+            "epic_est_h":    ep.get("epic_est_h", 0.0),
+            "epic_status":   ep.get("epic_status", ""),
         })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
@@ -1548,27 +1588,16 @@ with tab_init:
 
         _epics = (
             idf[idf["epic_key"] != ""]
-            .groupby(["epic_key", "epic_summary"])
+            .groupby(["epic_key", "epic_summary", "epic_assignee", "epic_est_h"])
             .agg(
-                estimate_h=("estimate_h", "sum"),
                 logged_h=("logged_h", "sum"),
                 total_stories=("key", "count"),
                 done_stories=("is_done", "sum"),
             )
             .reset_index()
+            .rename(columns={"epic_est_h": "estimate_h"})
             .sort_values("logged_h", ascending=False)
         )
-        _no_epic = idf[idf["epic_key"] == ""]
-        if not _no_epic.empty:
-            _standalone = pd.DataFrame([{
-                "epic_key": "—",
-                "epic_summary": "No Epic / Standalone",
-                "estimate_h": _no_epic["estimate_h"].sum(),
-                "logged_h":   _no_epic["logged_h"].sum(),
-                "total_stories": len(_no_epic),
-                "done_stories":  int(_no_epic["is_done"].sum()),
-            }])
-            _epics = pd.concat([_epics, _standalone], ignore_index=True)
 
         if _epics.empty:
             st.info("No epic grouping found — stories may not have parent epics in Jira.")
@@ -1583,18 +1612,17 @@ with tab_init:
                 total = int(ep["total_stories"])
                 color = "#10b981" if pct >= 90 else ("#f59e0b" if pct >= 50 else "#3b82f6")
                 label = ep["epic_summary"] or ep["epic_key"]
+                _assignee = ep.get("epic_assignee", "")
                 with _ecols[idx % 3]:
                     st.markdown(f"""
 <div style="border:1px solid #21262d;border-radius:10px;padding:14px 16px;margin-bottom:12px;background:#0d1117;">
-  <div style="font-size:0.78rem;color:#9ca3af;font-weight:600;margin-bottom:4px;
-       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="{label}">
-    {ep['epic_key'] if ep['epic_key'] != '—' else ''}
-    {'&nbsp;·&nbsp;' if ep['epic_key'] not in ('', '—') else ''}
-    {label[:48] + ('…' if len(label)>48 else '')}
-  </div>
-  <div style="font-size:1.6rem;font-weight:800;color:{color};">{pct:.0f}%</div>
-  <div style="font-size:0.82rem;color:#9ca3af;margin-bottom:8px;">
-    {fh(log)} logged&nbsp;·&nbsp;{fh(est)} estimated&nbsp;·&nbsp;{done}/{total} done
+  <div style="font-size:0.72rem;color:#6b7280;margin-bottom:2px;">{ep['epic_key']}</div>
+  <div style="font-size:0.85rem;color:#e6edf3;font-weight:600;margin-bottom:6px;
+       line-height:1.3;" title="{label}">{label[:60] + ('…' if len(label)>60 else '')}</div>
+  <div style="font-size:1.7rem;font-weight:800;color:{color};line-height:1;">{pct:.0f}%</div>
+  <div style="font-size:0.78rem;color:#9ca3af;margin:4px 0 8px;">
+    {fh(log)} logged&nbsp;·&nbsp;{fh(est)} est&nbsp;·&nbsp;{done}/{total} stories done
+    {f'&nbsp;·&nbsp;<span style="color:#6b7280">{_assignee}</span>' if _assignee and _assignee != "Unassigned" else ""}
   </div>
   <div style="width:100%;background:rgba(255,255,255,0.08);border-radius:999px;height:7px;">
     <div style="width:{bar:.1f}%;background:{color};border-radius:999px;height:7px;"></div>
