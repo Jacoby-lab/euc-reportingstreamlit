@@ -455,7 +455,7 @@ def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     keys_str = ", ".join(f'"{k}"' for k in jira_keys)
-    jql      = f'project in ({keys_str}) AND labels in ("initiative","Initiative")'
+    jql      = f'project in ({keys_str}) AND labels in ("initiative","Initiative") AND labels = "2026H1"'
 
     # Paginate with extended fields
     issues, npt = [], None
