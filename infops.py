@@ -1112,7 +1112,7 @@ with tab2:
 # TAB 5 · GOAL TRACKER  (Apr 1 – Dec 31 2026, 1,250h annual goal)
 # ═══════════════════════════════════════════════════════════════════════════
 with tab_goal:
-    _GOAL_START   = date(2026, 4, 1)
+    _GOAL_START   = date(2026, 1, 1)
     _GOAL_END     = date(2026, 12, 31)
     _ANNUAL_GOAL  = 1250.0   # Warren's 2026 target
     _DAILY_TARGET = 6.0      # hours per workday
@@ -1128,7 +1128,7 @@ with tab_goal:
     st.markdown("### 🎯 2026 Time Tracking Goal")
     st.markdown(
         f"Track progress toward **1,250 logged hours** by Dec 31, 2026 · "
-        f"**6h/workday** · Apr 1 – Dec 31, 2026 &nbsp;·&nbsp; "
+        f"**6h/workday** · Jan 1 – Dec 31, 2026 &nbsp;·&nbsp; "
         f"**{_elapsed_wd}** workdays elapsed &nbsp;·&nbsp; **{_remaining_wd}** remaining"
     )
     st.caption(
