@@ -504,7 +504,7 @@ def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
     keys_str = ", ".join(f'"{k}"' for k in jira_keys)
 
     # ── Step 1: fetch epics ──────────────────────────────────────────────
-    epic_jql    = f'project in ({keys_str}) AND issuetype = Epic AND labels = "2026H1"'
+    epic_jql    = f'project in ({keys_str}) AND issuetype = Epic AND labels = "2026H1" AND labels in ("initiative","Initiative")'
     epic_issues = _paginate_jql(base_url, auth, headers, epic_jql,
                                 "summary,assignee,timeoriginalestimate,status")
 
