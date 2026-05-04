@@ -589,7 +589,7 @@ def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
 
     jira_keys    = set(cfg.get("jira_keys", []))
     _today       = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
-    date_start_s = "2026-01-01"
+    date_start_s = "2026-04-01"
     date_end_s   = _today.strftime("%Y-%m-%d")
     empty_cols   = ["Name", "source", "category", "hours", "date", "issue"]
 
@@ -1320,13 +1320,14 @@ with tab2:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TAB 5 · GOAL TRACKER  (Apr 1 – Dec 31 2026, 1,250h annual goal)
+# TAB 5 · GOAL TRACKER  (Apr 1 – Dec 31 2026, 1,020h annual goal)
 # ═══════════════════════════════════════════════════════════════════════════
 with tab_goal:
-    _GOAL_START   = date(2026, 1, 1)
-    _GOAL_END     = date(2026, 12, 31)
-    _ANNUAL_GOAL  = 1250.0   # Warren's 2026 target
-    _DAILY_TARGET = 6.0      # hours per workday
+    _GOAL_START    = date(2026, 4, 1)
+    _GOAL_END      = date(2026, 12, 31)
+    _ANNUAL_GOAL   = 1020.0   # Apr 1 – Dec 31 target (accounts for 6 wks PTO/life events)
+    _DAILY_TARGET  = 6.0      # hours per workday
+    _WEEKLY_TARGET = 30.0     # hours per week (5 days × 6h)
 
     _local_today_g  = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
     _goal_fetch_end = min(_GOAL_END, _local_today_g)
@@ -1338,12 +1339,13 @@ with tab_goal:
 
     st.markdown("### 🎯 2026 Time Tracking Goal")
     st.markdown(
-        f"Track progress toward **1,250 logged hours** by Dec 31, 2026 · "
-        f"**6h/workday** · Jan 1 – Dec 31, 2026 &nbsp;·&nbsp; "
+        f"Track progress toward **1,020 logged hours** by Dec 31, 2026 · "
+        f"**6h/workday · 30h/week** · Apr 1 – Dec 31, 2026 &nbsp;·&nbsp; "
         f"**{_elapsed_wd}** workdays elapsed &nbsp;·&nbsp; **{_remaining_wd}** remaining"
     )
     st.caption(
-        "Projected year-end total = current daily rate × remaining workdays + hours logged so far. "
+        "Goal: 1,020h accounts for ~6 weeks of PTO / life events across the year. "
+        "Projected year-end = current daily rate × remaining workdays + hours so far. "
         "On Track = within 10% of expected pace."
     )
 
@@ -1381,7 +1383,7 @@ with tab_goal:
         if _expected_to_date > 0
         else True
     )
-    # Hours still needed per remaining workday to hit 1,250h
+    # Hours still needed per remaining workday to hit 1,020h
     _goal_members["h_per_day_needed"] = (
         (_ANNUAL_GOAL - _goal_members["logged_h"]) / (_remaining_wd or 1)
     ).clip(lower=0)
@@ -1410,12 +1412,13 @@ with tab_goal:
             + " · ".join(_at_risk_names)
         )
     elif _elapsed_wd > 0:
-        st.success("✅ All members are on pace for the 1,250h annual goal.")
+        st.success("✅ All members are on pace for the 1,020h annual goal.")
 
     st.divider()
 
     # ── Per-member progress cards ───────────────────────────────────────────
     st.markdown("#### Member Progress")
+    st.caption("Click any card to expand and view that member's week-by-week hours.")
 
     for _, row in _goal_members.iterrows():
         logged    = row["logged_h"]
@@ -1447,11 +1450,13 @@ with tab_goal:
         projected_str = fh(projected) if _elapsed_wd > 0 else "—"
         pace_label    = f"{pct_pace:.0f}% of pace" if _expected_to_date > 0 else "Goal period not started"
 
-        st.markdown(f"""
-<div style="border:1px solid {_card_border};border-radius:10px;padding:14px 18px;margin-bottom:10px;background:{_card_bg};">
+        _exp_label = f"{_status_icon} {row['Name']}  ·  {fh(logged)} logged  ·  {pace_label}"
+        with st.expander(_exp_label, expanded=False):
+            st.markdown(f"""
+<div style="border:1px solid {_card_border};border-radius:10px;padding:14px 18px;margin-bottom:12px;background:{_card_bg};">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
     <span style="font-size:0.95rem;font-weight:700;color:#e6edf3;">{_status_icon} {row['Name']}</span>
-    <span style="font-size:0.82rem;color:#9ca3af;">Need <b style="color:{_color}">{need_pd:.1f}h/day</b> remaining to hit 1,250h</span>
+    <span style="font-size:0.82rem;color:#9ca3af;">Need <b style="color:{_color}">{need_pd:.1f}h/day</b> remaining to hit 1,020h</span>
   </div>
   <div style="display:flex;gap:24px;margin-bottom:10px;flex-wrap:wrap;align-items:baseline;">
     <span style="font-size:1.15rem;font-weight:800;color:#fff;">Logged: <span style="color:{_color}">{fh(logged)}</span></span>
@@ -1464,10 +1469,66 @@ with tab_goal:
   </div>
   <div style="display:flex;justify-content:space-between;margin-top:4px;">
     <span style="font-size:0.72rem;color:#6b7280;">{pace_label}</span>
-    <span style="font-size:0.72rem;color:#6b7280;">1,250h annual goal</span>
+    <span style="font-size:0.72rem;color:#6b7280;">1,020h annual goal</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+            # ── Weekly trend chart ──────────────────────────────────────────
+            if not _goal_raw.empty:
+                _member_raw = _goal_raw[_goal_raw["Name"] == row["Name"]].copy()
+                if not _member_raw.empty:
+                    _member_raw["date_dt"]    = pd.to_datetime(_member_raw["date"])
+                    _member_raw["week_start"] = _member_raw["date_dt"].dt.to_period("W").apply(
+                        lambda p: p.start_time.date()
+                    )
+                    _weekly = (
+                        _member_raw.groupby("week_start")["hours"]
+                        .sum()
+                        .reset_index()
+                        .rename(columns={"week_start": "Week", "hours": "Hours"})
+                    )
+                    _weekly["Hours_fmt"] = _weekly["Hours"].apply(fh)
+                    _weekly["Week_str"]  = _weekly["Week"].apply(lambda d: d.strftime("%-m/%-d"))
+
+                    fig_wk = px.line(
+                        _weekly, x="Week_str", y="Hours",
+                        markers=True,
+                        custom_data=["Hours_fmt"],
+                        labels={"Week_str": "Week of", "Hours": "Hours Logged"},
+                        title=f"Weekly Hours — {row['Name']}",
+                    )
+                    fig_wk.add_hline(
+                        y=_WEEKLY_TARGET,
+                        line_color="rgba(255,215,0,0.55)",
+                        line_dash="dash",
+                        line_width=1.5,
+                        annotation_text="30h target",
+                        annotation_position="top right",
+                        annotation_font_color="rgba(255,215,0,0.75)",
+                        annotation_font_size=11,
+                    )
+                    fig_wk.update_traces(
+                        line_color=_color,
+                        marker=dict(size=7, color=_color),
+                        hovertemplate=(
+                            "Week of %{x}<br>"
+                            "Hours: %{customdata[0]}"
+                            "<extra></extra>"
+                        ),
+                    )
+                    fig_wk.update_layout(
+                        height=280,
+                        margin=dict(t=40, b=20, l=0, r=10),
+                        xaxis=dict(showgrid=False, tickangle=-30),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title=""),
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        title_font_size=13,
+                    )
+                    st.plotly_chart(fig_wk, use_container_width=True)
+                else:
+                    st.caption(f"No goal-period data found for {row['Name']}.")
 
     # ── Projected EOY chart ────────────────────────────────────────────────
     if _elapsed_wd > 0:
@@ -1492,7 +1553,7 @@ with tab_goal:
             line_color="rgba(255,215,0,0.65)",
             line_dash="dash",
             line_width=2,
-            annotation_text="1,250h Goal",
+            annotation_text="1,020h Goal",
             annotation_position="top",
             annotation_font_color="rgba(255,215,0,0.8)",
             annotation_font_size=12,
