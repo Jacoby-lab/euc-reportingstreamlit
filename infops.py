@@ -231,12 +231,25 @@ def _extract_rows(issues, base_url, auth, headers, date_start, date_end, members
         wl_data  = fields.get("worklog", {})
         worklogs = wl_data.get("worklogs", [])
         if wl_data.get("total", 0) > len(worklogs):
-            wl_resp = requests.get(
-                f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
-                auth=auth, headers=headers, timeout=30,
-            )
-            if wl_resp.ok:
-                worklogs = wl_resp.json().get("worklogs", [])
+            # Paginate the per-issue worklog endpoint — default maxResults=20 silently
+            # drops worklogs on busy tickets. Use maxResults=5000 + startAt pagination.
+            worklogs = []
+            start_at = 0
+            while True:
+                wl_resp = requests.get(
+                    f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
+                    auth=auth, headers=headers,
+                    params={"maxResults": 5000, "startAt": start_at},
+                    timeout=30,
+                )
+                if not wl_resp.ok:
+                    break
+                wl_page = wl_resp.json()
+                page_items = wl_page.get("worklogs", [])
+                worklogs.extend(page_items)
+                start_at += len(page_items)
+                if start_at >= wl_page.get("total", 0) or not page_items:
+                    break
         for wl in worklogs:
             log_date = wl["started"][:10]
             if not (date_start <= log_date <= date_end):
