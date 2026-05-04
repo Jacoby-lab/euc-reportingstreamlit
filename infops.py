@@ -578,13 +578,13 @@ def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
     """
-    Fetch Jan 1 – today worklogs for the Goal Tracker.
+    Fetch Apr 1 – today worklogs for the Goal Tracker.
 
-    Strategy: one JQL query PER MEMBER run in parallel (ThreadPoolExecutor).
-      - Each query covers ALL projects (no project filter) → catches everything
-      - Each result set < ~500 issues per person → stays under 5000 limit
-      - 25 parallel workers ≈ 3-5s wall time vs ~60s sequential
-      - Deduplicates rows by (issue, date, Name, hours) across results
+    Strategy: bulk worklog/updated + worklog/list endpoints — bypasses JQL indexing
+    entirely so there are no worklogDate index gaps or missing issues.
+      1. GET /worklog/updated?since=<apr1_ms>  → all worklog IDs created/modified since Apr 1
+      2. POST /worklog/list (batches of 1000)  → full worklog objects
+      3. Filter in Python by member displayName + started date
     """
     try:
         base_url = st.secrets["jira"]["base_url"].rstrip("/")
@@ -593,66 +593,81 @@ def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
     except KeyError:
         return pd.DataFrame()
 
-    auth         = (email, token)
-    headers      = {"Accept": "application/json"}
-    cfg          = GROUPS[group_name]
-    members      = list(cfg.get("members") or [])
+    auth       = (email, token)
+    headers    = {"Accept": "application/json", "Content-Type": "application/json"}
+    cfg        = GROUPS[group_name]
+    members    = set(cfg.get("members") or [])
     if not members:
         return pd.DataFrame()
 
-    jira_keys    = set(cfg.get("jira_keys", []))
     _today       = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
     date_start_s = "2026-04-01"
     date_end_s   = _today.strftime("%Y-%m-%d")
     empty_cols   = ["Name", "source", "category", "hours", "date", "issue"]
 
-    def _fetch_member(member: str) -> list:
-        """Fetch all 2026 worklogs for a single member across all projects."""
-        jql = (
-            f'worklogAuthor = "{member}" '
-            f'AND (worklogDate >= "{date_start_s}" OR updated >= "{date_start_s}")'
+    # ── Step 1: collect all worklog IDs updated since Apr 1, 2026 ────────────
+    since_ms    = int(datetime(2026, 4, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    worklog_ids = []
+    cursor      = since_ms
+    MAX_PAGES   = 500          # safety cap: 500 × 1000 = 500k worklogs max
+
+    for _ in range(MAX_PAGES):
+        resp = requests.get(
+            f"{base_url}/rest/api/3/worklog/updated",
+            auth=auth, headers={"Accept": "application/json"},
+            params={"since": cursor},
+            timeout=30,
         )
-        # Thread-safe: no st.* calls — return empty list on error
-        try:
-            issues, npt = [], None
-            while True:
-                params = {
-                    "jql": jql, "maxResults": 100,
-                    "fields": "summary,labels,worklog,project",
-                }
-                if npt:
-                    params["nextPageToken"] = npt
-                resp = requests.get(
-                    f"{base_url}/rest/api/3/search/jql",
-                    auth=auth, headers=headers, params=params, timeout=30,
-                )
-                if not resp.ok:
-                    break
-                data = resp.json()
-                issues.extend(data.get("issues", []))
-                npt = data.get("nextPageToken")
-                if not npt:
-                    break
-            return _extract_rows(
-                issues, base_url, auth, headers,
-                date_start_s, date_end_s, {member}, jira_keys,
-            )
-        except Exception:
-            return []
+        if not resp.ok:
+            break
+        data   = resp.json()
+        values = data.get("values", [])
+        worklog_ids.extend(v["worklogId"] for v in values)
+        if data.get("lastPage", True) or not values:
+            break
+        cursor = values[-1]["updatedTime"]
 
-    all_rows = []
-    seen: set = set()
+    if not worklog_ids:
+        return pd.DataFrame(columns=empty_cols)
 
-    with ThreadPoolExecutor(max_workers=min(len(members), 10)) as executor:
-        futures = {executor.submit(_fetch_member, m): m for m in members}
-        for fut in as_completed(futures):
-            for row in fut.result():
-                key = (row["issue"], row["date"], row["Name"], round(row["hours"], 4))
-                if key not in seen:
-                    seen.add(key)
-                    all_rows.append(row)
+    # ── Step 2: batch-fetch full worklog objects (1000 per request) ──────────
+    all_worklogs: list = []
+    for i in range(0, len(worklog_ids), 1000):
+        batch = worklog_ids[i : i + 1000]
+        resp  = requests.post(
+            f"{base_url}/rest/api/3/worklog/list",
+            auth=auth, headers=headers,
+            json={"ids": batch},
+            timeout=60,
+        )
+        if resp.ok:
+            all_worklogs.extend(resp.json())
 
-    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(columns=empty_cols)
+    # ── Step 3: filter by member + date range ────────────────────────────────
+    rows: list = []
+    seen: set  = set()
+    for wl in all_worklogs:
+        author = (wl.get("author") or {}).get("displayName", "")
+        if author not in members:
+            continue
+        log_date = (wl.get("started") or "")[:10]
+        if not log_date or not (date_start_s <= log_date <= date_end_s):
+            continue
+        wl_id = str(wl.get("id", ""))
+        key   = (wl_id, log_date, author)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            "Name":     author,
+            "source":   "Jira",   # Goal Tracker doesn't use source/category
+            "category": "KTLO",
+            "hours":    wl["timeSpentSeconds"] / 3600,
+            "date":     log_date,
+            "issue":    str(wl.get("issueId", wl_id)),
+        })
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
 
 
 def build_summary_df(raw: pd.DataFrame) -> pd.DataFrame:
