@@ -1418,7 +1418,7 @@ with tab_goal:
 
     # ── Per-member progress cards ───────────────────────────────────────────
     st.markdown("#### Member Progress")
-    st.caption("Click any card to expand and view that member's week-by-week hours.")
+    st.caption("Click **📈 Weekly trend** below any card to view week-by-week hours.")
 
     for _, row in _goal_members.iterrows():
         logged    = row["logged_h"]
@@ -1450,10 +1450,9 @@ with tab_goal:
         projected_str = fh(projected) if _elapsed_wd > 0 else "—"
         pace_label    = f"{pct_pace:.0f}% of pace" if _expected_to_date > 0 else "Goal period not started"
 
-        _exp_label = f"{_status_icon} {row['Name']}  ·  {fh(logged)} logged  ·  {pace_label}"
-        with st.expander(_exp_label, expanded=False):
-            st.markdown(f"""
-<div style="border:1px solid {_card_border};border-radius:10px;padding:14px 18px;margin-bottom:12px;background:{_card_bg};">
+        # ── Always-visible rich card ────────────────────────────────────────
+        st.markdown(f"""
+<div style="border:1px solid {_card_border};border-radius:10px 10px 0 0;padding:14px 18px;margin-bottom:0;background:{_card_bg};">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
     <span style="font-size:0.95rem;font-weight:700;color:#e6edf3;">{_status_icon} {row['Name']}</span>
     <span style="font-size:0.82rem;color:#9ca3af;">Need <b style="color:{_color}">{need_pd:.1f}h/day</b> remaining to hit 1,020h</span>
@@ -1474,7 +1473,8 @@ with tab_goal:
 </div>
 """, unsafe_allow_html=True)
 
-            # ── Weekly trend chart ──────────────────────────────────────────
+        # ── Weekly chart in expander attached below card ────────────────────
+        with st.expander("📈 Weekly trend", expanded=False):
             if not _goal_raw.empty:
                 _member_raw = _goal_raw[_goal_raw["Name"] == row["Name"]].copy()
                 if not _member_raw.empty:
@@ -1529,6 +1529,7 @@ with tab_goal:
                     st.plotly_chart(fig_wk, use_container_width=True)
                 else:
                     st.caption(f"No goal-period data found for {row['Name']}.")
+        st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
     # ── Projected EOY chart ────────────────────────────────────────────────
     if _elapsed_wd > 0:
