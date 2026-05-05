@@ -93,7 +93,7 @@ GROUPS = OrderedDict([
             "Eduardo Rangel Ruiz", "Alonso Renteria Olvera", "Santiago Morales",
             "Antonio Lopez", "Esaú Gallardo",
             "Roberto Gaitan Zamudio", "Gabriela Martinez Atriano",
-            "Edgar Aquino Lopez", "Joshua Ramos Dailey", "Mildred Moron Guerrero",
+            "Edgar Aquino Lopez", "Joshua Ramos Dailey", "Mildred Morón Guerrero",
             "Julian Hoeksema", "Armand Theunis", "Wessel Geest",
         },
         "goal_exclude": {"Wessel Geest", "Armand Theunis", "Julian Hoeksema"},
