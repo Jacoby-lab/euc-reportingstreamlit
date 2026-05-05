@@ -1571,7 +1571,7 @@ with tab_goal:
                         height=280,
                         margin=dict(t=40, b=20, l=0, r=10),
                         xaxis=dict(showgrid=False, tickangle=-30),
-                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title=""),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title="", range=[0, 50]),
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
                         title_font_size=13,
