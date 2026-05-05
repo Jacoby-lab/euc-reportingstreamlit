@@ -1527,16 +1527,28 @@ with tab_goal:
         with st.expander("📈 Weekly trend", expanded=False):
             if not _goal_raw.empty:
                 _member_raw = _goal_raw[_goal_raw["Name"] == row["Name"]].copy()
-                if not _member_raw.empty:
-                    _member_raw["date_dt"]    = pd.to_datetime(_member_raw["date"])
+                if True:
+                    _member_raw["date_dt"]    = pd.to_datetime(_member_raw["date"]) if not _member_raw.empty else pd.Series(dtype="datetime64[ns]")
                     _member_raw["week_start"] = _member_raw["date_dt"].dt.to_period("W").apply(
                         lambda p: p.start_time.date()
+                    ) if not _member_raw.empty else pd.Series(dtype="object")
+
+                    _logged_by_week = (
+                        _member_raw.groupby("week_start")["hours"].sum()
+                        if not _member_raw.empty
+                        else pd.Series(dtype="float64")
                     )
+
+                    # Build full week spine from member start → today so gaps show as 0
+                    _m_start     = _member_start_dates.get(row["Name"], _GOAL_START)
+                    _first_mon   = _m_start - timedelta(days=_m_start.weekday())
+                    _all_weeks   = pd.date_range(_first_mon, _local_today_g, freq="W-MON").date
+                    _week_spine  = pd.Series(0.0, index=_all_weeks)
+                    _week_spine.update(_logged_by_week)
+
                     _weekly = (
-                        _member_raw.groupby("week_start")["hours"]
-                        .sum()
-                        .reset_index()
-                        .rename(columns={"week_start": "Week", "hours": "Hours"})
+                        _week_spine.reset_index()
+                        .rename(columns={"index": "Week", 0: "Hours"})
                     )
                     _weekly["Hours_fmt"] = _weekly["Hours"].apply(fh)
                     _weekly["Week_str"]  = _weekly["Week"].apply(lambda d: d.strftime("%-m/%-d"))
@@ -1577,8 +1589,6 @@ with tab_goal:
                         title_font_size=13,
                     )
                     st.plotly_chart(fig_wk, use_container_width=True)
-                else:
-                    st.caption(f"No goal-period data found for {row['Name']}.")
         st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
     # ── Projected EOY chart ────────────────────────────────────────────────
