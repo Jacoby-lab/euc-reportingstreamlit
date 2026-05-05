@@ -1379,8 +1379,6 @@ with tab_goal:
     )
 
     # Fetch goal-period data month-by-month (avoids Jira's 5000-issue-per-query limit)
-    if st.button("🔄 Refresh goal data", key="clear_goal_cache"):
-        fetch_ytd_goal_data.clear()
     with st.spinner("Loading 2026 goal data (fetching month by month for accuracy)…"):
         _goal_raw = fetch_ytd_goal_data(selected_group)
         _goal_df  = build_summary_df(_goal_raw)
