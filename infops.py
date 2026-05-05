@@ -1351,7 +1351,7 @@ with tab2:
 # TAB 5 · GOAL TRACKER  (Mar 30 – Dec 31 2026, 1,020h annual goal)
 # ═══════════════════════════════════════════════════════════════════════════
 with tab_goal:
-    _GOAL_START    = date(2026, 4, 1)
+    _GOAL_START    = date(2026, 3, 30)
     _GOAL_END      = date(2026, 12, 31)
     _ANNUAL_GOAL   = 1020.0   # Mar 30 – Dec 31 target (accounts for 6 wks PTO/life events)
     _DAILY_TARGET  = 6.0      # hours per workday
