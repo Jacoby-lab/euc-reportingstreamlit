@@ -647,8 +647,11 @@ def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
     # ── Step 3: filter by member + date range ────────────────────────────────
     rows: list = []
     seen: set  = set()
+    _all_authors: set = set()
     for wl in all_worklogs:
         author = (wl.get("author") or {}).get("displayName", "")
+        if author:
+            _all_authors.add(author)
         if author not in members:
             continue
         log_date = (wl.get("started") or "")[:10]
@@ -668,6 +671,7 @@ def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
             "issue":    str(wl.get("issueId", wl_id)),
         })
 
+    st.session_state["_goal_debug_authors"] = sorted(_all_authors)
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=empty_cols)
 
 
@@ -1382,6 +1386,9 @@ with tab_goal:
     with st.spinner("Loading 2026 goal data (fetching month by month for accuracy)…"):
         _goal_raw = fetch_ytd_goal_data(selected_group)
         _goal_df  = build_summary_df(_goal_raw)
+
+    with st.expander("🔍 Debug: raw Jira author names seen in worklog fetch"):
+        st.write(st.session_state.get("_goal_debug_authors", []))
 
     # Build per-member rows (include all configured members, even those with 0h logged)
     _goal_exclude  = GROUPS[selected_group].get("goal_exclude", set())
