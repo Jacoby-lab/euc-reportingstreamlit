@@ -97,6 +97,9 @@ GROUPS = OrderedDict([
             "Julian Hoeksema", "Armand Theunis", "Wessel Geest",
         },
         "goal_exclude": {"Wessel Geest", "Armand Theunis", "Julian Hoeksema"},
+        "member_start_dates": {
+            "Mildred Morón Guerrero": date(2026, 5, 4),
+        },
     }),
     ("Identity", {
         "jira_keys":      ["ID"],
@@ -1395,34 +1398,49 @@ with tab_goal:
         _goal_members["Total"] = 0.0
 
     _goal_members = _goal_members.rename(columns={"Total": "logged_h"})
-    _goal_members["expected_h"]  = _expected_to_date
-    _goal_members["surplus_h"]   = _goal_members["logged_h"] - _expected_to_date
 
-    if _elapsed_wd > 0:
-        _goal_members["daily_rate"]  = _goal_members["logged_h"] / _elapsed_wd
-        _goal_members["projected_h"] = (
-            _goal_members["logged_h"] + _goal_members["daily_rate"] * _remaining_wd
-        )
-    else:
-        _goal_members["daily_rate"]  = 0.0
-        _goal_members["projected_h"] = 0.0
+    # Per-member start dates (late joiners get prorated elapsed + annual goal)
+    _member_start_dates = GROUPS[selected_group].get("member_start_dates", {})
+
+    def _member_metrics(name):
+        m_start      = max(_member_start_dates.get(name, _GOAL_START), _GOAL_START)
+        m_total_wd   = _count_weekdays(m_start, _GOAL_END)
+        m_elapsed_wd = _count_weekdays(m_start, _goal_fetch_end) if _goal_fetch_end >= m_start else 0
+        m_annual_goal = _ANNUAL_GOAL * (m_total_wd / max(_total_wd, 1))
+        m_expected_h  = m_elapsed_wd * _DAILY_TARGET
+        return pd.Series({
+            "elapsed_wd":  m_elapsed_wd,
+            "annual_goal": m_annual_goal,
+            "expected_h":  m_expected_h,
+        })
+
+    _goal_members = pd.concat(
+        [_goal_members, _goal_members["Name"].apply(_member_metrics)], axis=1
+    )
+
+    _goal_members["surplus_h"] = _goal_members["logged_h"] - _goal_members["expected_h"]
+
+    _goal_members["daily_rate"] = _goal_members.apply(
+        lambda r: r["logged_h"] / r["elapsed_wd"] if r["elapsed_wd"] > 0 else 0.0, axis=1
+    )
+    _goal_members["projected_h"] = (
+        _goal_members["logged_h"] + _goal_members["daily_rate"] * _remaining_wd
+    )
 
     # "On track" = logged >= 90% of expected-to-date
-    _goal_members["on_track"] = (
-        _goal_members["logged_h"] >= (_expected_to_date * 0.9)
-        if _expected_to_date > 0
-        else True
+    _goal_members["on_track"] = _goal_members.apply(
+        lambda r: r["logged_h"] >= (r["expected_h"] * 0.9) if r["expected_h"] > 0 else True, axis=1
     )
-    # Hours still needed per remaining workday to hit 1,020h
+    # Hours still needed per remaining workday to hit prorated annual goal
     _goal_members["h_per_day_needed"] = (
-        (_ANNUAL_GOAL - _goal_members["logged_h"]) / (_remaining_wd or 1)
+        (_goal_members["annual_goal"] - _goal_members["logged_h"]) / (_remaining_wd or 1)
     ).clip(lower=0)
 
     _goal_members = _goal_members.sort_values("logged_h", ascending=False)
 
     # ── Summary metrics ─────────────────────────────────────────────────────
     _g_logged   = _goal_members["logged_h"].sum()
-    _g_expected = _expected_to_date * len(_goal_members)
+    _g_expected = _goal_members["expected_h"].sum()
     _g_on_track = int(_goal_members["on_track"].sum())
     _g_at_risk  = int((~_goal_members["on_track"]).sum())
     _g_pct      = _g_logged / max(_g_expected, 1) * 100
@@ -1457,8 +1475,10 @@ with tab_goal:
         on_track  = row["on_track"]
         need_pd   = row["h_per_day_needed"]
 
-        pct_pace  = (logged / max(_expected_to_date, 1) * 100) if _expected_to_date > 0 else 0
-        bar_pct   = min(pct_pace, 100)
+        m_expected = row["expected_h"]
+        m_annual   = row["annual_goal"]
+        pct_pace   = (logged / max(m_expected, 1) * 100) if m_expected > 0 else 0
+        bar_pct    = min(pct_pace, 100)
 
         if on_track:
             _card_bg    = "#0a1f14"
@@ -1477,19 +1497,19 @@ with tab_goal:
             _status_icon = "🔴"
 
         surplus_str   = (f"+{fh(surplus)}" if surplus >= 0 else f"−{fh(abs(surplus))}")
-        projected_str = fh(projected) if _elapsed_wd > 0 else "—"
-        pace_label    = f"{pct_pace:.0f}% of pace" if _expected_to_date > 0 else "Goal period not started"
+        projected_str = fh(projected) if row["elapsed_wd"] > 0 else "—"
+        pace_label    = f"{pct_pace:.0f}% of pace" if m_expected > 0 else "Goal period not started"
 
         # ── Always-visible rich card ────────────────────────────────────────
         st.markdown(f"""
 <div style="border:1px solid {_card_border};border-radius:10px 10px 0 0;padding:14px 18px;margin-bottom:0;background:{_card_bg};">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
     <span style="font-size:0.95rem;font-weight:700;color:#e6edf3;">{_status_icon} {row['Name']}</span>
-    <span style="font-size:0.82rem;color:#9ca3af;">Need <b style="color:{_color}">{need_pd:.1f}h/day</b> remaining to hit 1,020h</span>
+    <span style="font-size:0.82rem;color:#9ca3af;">Need <b style="color:{_color}">{need_pd:.1f}h/day</b> remaining to hit {fh(m_annual)}</span>
   </div>
   <div style="display:flex;gap:24px;margin-bottom:10px;flex-wrap:wrap;align-items:baseline;">
     <span style="font-size:1.15rem;font-weight:800;color:#fff;">Logged: <span style="color:{_color}">{fh(logged)}</span></span>
-    <span style="color:#9ca3af;font-size:0.88rem;">Expected: {fh(_expected_to_date)}</span>
+    <span style="color:#9ca3af;font-size:0.88rem;">Expected: {fh(m_expected)}</span>
     <span style="color:#9ca3af;font-size:0.88rem;">Δ <span style="color:{_color};font-weight:600">{surplus_str}</span></span>
     <span style="color:#9ca3af;font-size:0.88rem;">Projected EOY: <span style="color:{_color};font-weight:600">{projected_str}</span></span>
   </div>
@@ -1498,7 +1518,7 @@ with tab_goal:
   </div>
   <div style="display:flex;justify-content:space-between;margin-top:4px;">
     <span style="font-size:0.72rem;color:#6b7280;">{pace_label}</span>
-    <span style="font-size:0.72rem;color:#6b7280;">1,020h annual goal</span>
+    <span style="font-size:0.72rem;color:#6b7280;">{fh(m_annual)} annual goal</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
