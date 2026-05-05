@@ -96,6 +96,7 @@ GROUPS = OrderedDict([
             "Edgar Aquino Lopez", "Joshua Ramos Dailey", "Mildred Moron Guerrero",
             "Julian Hoeksema", "Armand Theunis", "Wessel Geest",
         },
+        "goal_exclude": {"Wessel Geest", "Armand Theunis", "Julian Hoeksema"},
     }),
     ("Identity", {
         "jira_keys":      ["ID"],
@@ -1383,7 +1384,8 @@ with tab_goal:
         _goal_df  = build_summary_df(_goal_raw)
 
     # Build per-member rows (include all configured members, even those with 0h logged)
-    _members_list  = sorted(GROUPS[selected_group].get("members", set()))
+    _goal_exclude  = GROUPS[selected_group].get("goal_exclude", set())
+    _members_list  = sorted(GROUPS[selected_group].get("members", set()) - _goal_exclude)
     _goal_members  = pd.DataFrame({"Name": _members_list})
     if not _goal_df.empty:
         _goal_members = _goal_members.merge(
