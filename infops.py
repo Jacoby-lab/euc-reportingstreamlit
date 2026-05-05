@@ -578,11 +578,11 @@ def fetch_initiative_issues(group_name: str) -> pd.DataFrame:
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
     """
-    Fetch Apr 1 – today worklogs for the Goal Tracker.
+    Fetch Mar 30 – today worklogs for the Goal Tracker.
 
     Strategy: bulk worklog/updated + worklog/list endpoints — bypasses JQL indexing
     entirely so there are no worklogDate index gaps or missing issues.
-      1. GET /worklog/updated?since=<apr1_ms>  → all worklog IDs created/modified since Apr 1
+      1. GET /worklog/updated?since=<mar30_ms>  → all worklog IDs created/modified since Mar 30
       2. POST /worklog/list (batches of 1000)  → full worklog objects
       3. Filter in Python by member displayName + started date
     """
@@ -601,12 +601,12 @@ def fetch_ytd_goal_data(group_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     _today       = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
-    date_start_s = "2026-04-01"
+    date_start_s = "2026-03-30"
     date_end_s   = _today.strftime("%Y-%m-%d")
     empty_cols   = ["Name", "source", "category", "hours", "date", "issue"]
 
-    # ── Step 1: collect all worklog IDs updated since Apr 1, 2026 ────────────
-    since_ms    = int(datetime(2026, 4, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    # ── Step 1: collect all worklog IDs updated since Mar 30, 2026 ────────────
+    since_ms    = int(datetime(2026, 3, 30, tzinfo=timezone.utc).timestamp() * 1000)
     worklog_ids = []
     cursor      = since_ms
     MAX_PAGES   = 500          # safety cap: 500 × 1000 = 500k worklogs max
@@ -1348,12 +1348,12 @@ with tab2:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TAB 5 · GOAL TRACKER  (Apr 1 – Dec 31 2026, 1,020h annual goal)
+# TAB 5 · GOAL TRACKER  (Mar 30 – Dec 31 2026, 1,020h annual goal)
 # ═══════════════════════════════════════════════════════════════════════════
 with tab_goal:
     _GOAL_START    = date(2026, 4, 1)
     _GOAL_END      = date(2026, 12, 31)
-    _ANNUAL_GOAL   = 1020.0   # Apr 1 – Dec 31 target (accounts for 6 wks PTO/life events)
+    _ANNUAL_GOAL   = 1020.0   # Mar 30 – Dec 31 target (accounts for 6 wks PTO/life events)
     _DAILY_TARGET  = 6.0      # hours per workday
     _WEEKLY_TARGET = 30.0     # hours per week (5 days × 6h)
 
@@ -1368,7 +1368,7 @@ with tab_goal:
     st.markdown("### 🎯 2026 Time Tracking Goal")
     st.markdown(
         f"Track progress toward **1,020 logged hours** by Dec 31, 2026 · "
-        f"**6h/workday · 30h/week** · Apr 1 – Dec 31, 2026 &nbsp;·&nbsp; "
+        f"**6h/workday · 30h/week** · Mar 30 – Dec 31, 2026 &nbsp;·&nbsp; "
         f"**{_elapsed_wd}** workdays elapsed &nbsp;·&nbsp; **{_remaining_wd}** remaining"
     )
     st.caption(
