@@ -4,7 +4,6 @@ import plotly.express as px
 import requests
 from collections import OrderedDict
 from datetime import date, timedelta, datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Feature flags ────────────────────────────────────────────────────────
 ENABLE_PERIOD_COMPARISON = True   # set False to disable prev-period delta arrows
@@ -70,7 +69,6 @@ CAT_LABELS = {
     "Incident":   "🚨 Incident",
 }
 
-SOURCE_COLORS = {"Jira": "#3B82F6", "TC": "#10B981"}
 
 # ── Group configuration ───────────────────────────────────────────────────
 # Maps display group name → Jira project keys + TC JSM team names.
@@ -188,6 +186,16 @@ def fh(d: float) -> str:
     """Decimal hours → 'Xh Ym' display string."""
     t = round(d * 60)
     return f"{t // 60}h {t % 60:02d}m"
+
+
+def _fd(d) -> str:
+    """Format a date as 'Mon D' without leading zero — portable across OS."""
+    return f"{d.strftime('%b')} {d.day}"
+
+
+def _fdm(d) -> str:
+    """Format a date as 'M/D' without leading zeros — portable across OS."""
+    return f"{d.month}/{d.day}"
 
 
 # ── Jira fetch helpers ────────────────────────────────────────────────────
@@ -412,12 +420,23 @@ def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
                 wl_data  = f.get("worklog", {})
                 worklogs = wl_data.get("worklogs", [])
                 if wl_data.get("total", 0) > len(worklogs):
-                    wr = requests.get(
-                        f"{base_url}/rest/api/3/issue/{ikey}/worklog",
-                        auth=auth, headers=headers, timeout=30,
-                    )
-                    if wr.ok:
-                        worklogs = wr.json().get("worklogs", [])
+                    worklogs = []
+                    wl_start = 0
+                    while True:
+                        wr = requests.get(
+                            f"{base_url}/rest/api/3/issue/{ikey}/worklog",
+                            auth=auth, headers=headers,
+                            params={"maxResults": 5000, "startAt": wl_start},
+                            timeout=30,
+                        )
+                        if not wr.ok:
+                            break
+                        wl_page = wr.json()
+                        page_items = wl_page.get("worklogs", [])
+                        worklogs.extend(page_items)
+                        wl_start += len(page_items)
+                        if wl_start >= wl_page.get("total", 0) or not page_items:
+                            break
 
                 member_logged: dict = {}
                 for wl in worklogs:
@@ -782,14 +801,14 @@ with st.sidebar:
         period_code  = "Custom"
 
     if date_start.month == date_end.month and date_start.year == date_end.year:
-        period_label = f"{date_start.strftime('%b %-d')}–{date_end.strftime('%-d, %Y')}"
+        period_label = f"{_fd(date_start)}–{date_end.day}, {date_end.year}"
     elif date_start.year == date_end.year:
-        period_label = f"{date_start.strftime('%b %-d')}–{date_end.strftime('%b %-d, %Y')}"
+        period_label = f"{_fd(date_start)}–{_fd(date_end)}, {date_end.year}"
     else:
-        period_label = f"{date_start.strftime('%b %-d, %Y')}–{date_end.strftime('%b %-d, %Y')}"
+        period_label = f"{_fd(date_start)}, {date_start.year}–{_fd(date_end)}, {date_end.year}"
 
     if range_type == "Year to Date":
-        period_label = f"Year to Date {_today.year} (Jan 1 – {_today.strftime('%b %-d')})"
+        period_label = f"Year to Date {_today.year} (Jan 1 – {_fd(_today)})"
     elif range_type == "Monthly":
         period_label = date_start.strftime("%B %Y")
     elif range_type == "Quarterly":
@@ -909,7 +928,7 @@ with tab_dash:
     jira_total  = df["Jira"].sum() if not df.empty else 0
     tc_total    = df["TC"].sum()   if not df.empty else 0
     grand_total = jira_total + tc_total
-    all_total   = grand_total or 1  # denominator only — never used for display
+    all_total   = grand_total or 1  # zero-division guard for percentage calculations
 
     st.markdown(f"""
 <div style="margin-bottom:6px;">
@@ -1030,7 +1049,7 @@ with tab_dash:
         )
         fig_ind.update_xaxes(showline=False)
         fig_ind.update_yaxes(showgrid=False)
-        st.plotly_chart(fig_ind, width='stretch')
+        st.plotly_chart(fig_ind, use_container_width=True)
 
     st.divider()
 
@@ -1077,7 +1096,7 @@ with tab_dash:
             margin=dict(t=10, b=0, l=0, r=0),
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_tree, width='stretch')
+        st.plotly_chart(fig_tree, use_container_width=True)
 
     _zero_members = [r["Name"] for _, r in df.iterrows() if r["Total"] == 0] if not df.empty else []
     _zero_note = " · " + ", ".join(_zero_members) + " logged 0h" if _zero_members else ""
@@ -1157,7 +1176,7 @@ with tab1:
                 height=380,
                 margin=dict(t=40, b=0, l=0, r=0),
             )
-            st.plotly_chart(fig_pie, width='stretch')
+            st.plotly_chart(fig_pie, use_container_width=True)
 
         with right:
             sort_order = fdf.sort_values("Total", ascending=False)["Name"].tolist()
@@ -1198,7 +1217,7 @@ with tab1:
                     annotation_font_color="rgba(255,255,255,0.6)",
                 )
             st.markdown("**Hours by Person — Stacked by Category**")
-            st.plotly_chart(fig_stack, width='stretch')
+            st.plotly_chart(fig_stack, use_container_width=True)
 
         st.divider()
         st.markdown("#### Member Cards")
@@ -1317,7 +1336,7 @@ with tab2:
                 margin=dict(t=40, r=130, b=20, l=0),
             )
             st.markdown(f"**{CAT_LABELS[selected_cat]} — Hours by Person**")
-            st.plotly_chart(fig_cat, width='stretch')
+            st.plotly_chart(fig_cat, use_container_width=True)
 
         with cr:
             # % of workload chart — what share of each person's total hours is this category
@@ -1348,7 +1367,7 @@ with tab2:
                 coloraxis_showscale=False,
                 margin=dict(t=40, r=60, b=20, l=0),
             )
-            st.plotly_chart(fig_pct, width='stretch')
+            st.plotly_chart(fig_pct, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1527,68 +1546,67 @@ with tab_goal:
         with st.expander("📈 Weekly trend", expanded=False):
             if not _goal_raw.empty:
                 _member_raw = _goal_raw[_goal_raw["Name"] == row["Name"]].copy()
-                if True:
-                    _member_raw["date_dt"]    = pd.to_datetime(_member_raw["date"]) if not _member_raw.empty else pd.Series(dtype="datetime64[ns]")
-                    _member_raw["week_start"] = _member_raw["date_dt"].dt.to_period("W").apply(
-                        lambda p: p.start_time.date()
-                    ) if not _member_raw.empty else pd.Series(dtype="object")
+                _member_raw["date_dt"]    = pd.to_datetime(_member_raw["date"]) if not _member_raw.empty else pd.Series(dtype="datetime64[ns]")
+                _member_raw["week_start"] = _member_raw["date_dt"].dt.to_period("W").apply(
+                    lambda p: p.start_time.date()
+                ) if not _member_raw.empty else pd.Series(dtype="object")
 
-                    _logged_by_week = (
-                        _member_raw.groupby("week_start")["hours"].sum()
-                        if not _member_raw.empty
-                        else pd.Series(dtype="float64")
-                    )
+                _logged_by_week = (
+                    _member_raw.groupby("week_start")["hours"].sum()
+                    if not _member_raw.empty
+                    else pd.Series(dtype="float64")
+                )
 
-                    # Build full week spine from member start → today so gaps show as 0
-                    _m_start     = _member_start_dates.get(row["Name"], _GOAL_START)
-                    _first_mon   = _m_start - timedelta(days=_m_start.weekday())
-                    _all_weeks   = pd.date_range(_first_mon, _local_today_g, freq="W-MON").date
-                    _week_spine  = pd.Series(0.0, index=_all_weeks)
-                    _week_spine.update(_logged_by_week)
+                # Build full week spine from member start → today so gaps show as 0
+                _m_start     = _member_start_dates.get(row["Name"], _GOAL_START)
+                _first_mon   = _m_start - timedelta(days=_m_start.weekday())
+                _all_weeks   = pd.date_range(_first_mon, _local_today_g, freq="W-MON").date
+                _week_spine  = pd.Series(0.0, index=_all_weeks)
+                _week_spine.update(_logged_by_week)
 
-                    _weekly = (
-                        _week_spine.reset_index()
-                        .rename(columns={"index": "Week", 0: "Hours"})
-                    )
-                    _weekly["Hours_fmt"] = _weekly["Hours"].apply(fh)
-                    _weekly["Week_str"]  = _weekly["Week"].apply(lambda d: d.strftime("%-m/%-d"))
+                _weekly = (
+                    _week_spine.reset_index()
+                    .rename(columns={"index": "Week", 0: "Hours"})
+                )
+                _weekly["Hours_fmt"] = _weekly["Hours"].apply(fh)
+                _weekly["Week_str"]  = _weekly["Week"].apply(_fdm)
 
-                    fig_wk = px.line(
-                        _weekly, x="Week_str", y="Hours",
-                        markers=True,
-                        custom_data=["Hours_fmt"],
-                        labels={"Week_str": "Week of", "Hours": "Hours Logged"},
-                        title=f"Weekly Hours — {row['Name']}",
-                    )
-                    fig_wk.add_hline(
-                        y=_WEEKLY_TARGET,
-                        line_color="rgba(255,215,0,0.55)",
-                        line_dash="dash",
-                        line_width=1.5,
-                        annotation_text="30h target",
-                        annotation_position="top right",
-                        annotation_font_color="rgba(255,215,0,0.75)",
-                        annotation_font_size=11,
-                    )
-                    fig_wk.update_traces(
-                        line_color=_color,
-                        marker=dict(size=7, color=_color),
-                        hovertemplate=(
-                            "Week of %{x}<br>"
-                            "Hours: %{customdata[0]}"
-                            "<extra></extra>"
-                        ),
-                    )
-                    fig_wk.update_layout(
-                        height=280,
-                        margin=dict(t=40, b=20, l=0, r=10),
-                        xaxis=dict(showgrid=False, tickangle=-30),
-                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title="", range=[0, 50]),
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        title_font_size=13,
-                    )
-                    st.plotly_chart(fig_wk, use_container_width=True)
+                fig_wk = px.line(
+                    _weekly, x="Week_str", y="Hours",
+                    markers=True,
+                    custom_data=["Hours_fmt"],
+                    labels={"Week_str": "Week of", "Hours": "Hours Logged"},
+                    title=f"Weekly Hours — {row['Name']}",
+                )
+                fig_wk.add_hline(
+                    y=_WEEKLY_TARGET,
+                    line_color="rgba(255,215,0,0.55)",
+                    line_dash="dash",
+                    line_width=1.5,
+                    annotation_text="30h target",
+                    annotation_position="top right",
+                    annotation_font_color="rgba(255,215,0,0.75)",
+                    annotation_font_size=11,
+                )
+                fig_wk.update_traces(
+                    line_color=_color,
+                    marker=dict(size=7, color=_color),
+                    hovertemplate=(
+                        "Week of %{x}<br>"
+                        "Hours: %{customdata[0]}"
+                        "<extra></extra>"
+                    ),
+                )
+                fig_wk.update_layout(
+                    height=280,
+                    margin=dict(t=40, b=20, l=0, r=10),
+                    xaxis=dict(showgrid=False, tickangle=-30),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", title="", range=[0, 50]),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    title_font_size=13,
+                )
+                st.plotly_chart(fig_wk, use_container_width=True)
         st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
     # ── Projected EOY chart ────────────────────────────────────────────────
@@ -1638,7 +1656,7 @@ with tab_goal:
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_proj, width='stretch')
+        st.plotly_chart(fig_proj, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1657,7 +1675,7 @@ with tab3:
 
     st.dataframe(
         display_df,
-        width='stretch',
+        use_container_width=True,
         hide_index=True,
         height=min(700, 80 + len(display_df) * 37),
     )
@@ -1670,7 +1688,7 @@ with tab3:
                 totals[col] = fh(fdf[col].sum())
         st.dataframe(
             pd.DataFrame([totals])[show_cols],
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
         )
 
@@ -1800,7 +1818,7 @@ with tab_init:
                 margin=dict(t=40, b=0, l=0, r=0),
                 paper_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig_donut, width='stretch')
+            st.plotly_chart(fig_donut, use_container_width=True)
 
         with right:
             # Hours logged per member on initiatives
@@ -1835,7 +1853,7 @@ with tab_init:
                     plot_bgcolor="rgba(0,0,0,0)",
                     xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
                 )
-                st.plotly_chart(fig_mem, width='stretch')
+                st.plotly_chart(fig_mem, use_container_width=True)
 
         st.divider()
 
@@ -1868,7 +1886,7 @@ with tab_init:
                 xaxis=dict(showgrid=False),
                 yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
             )
-            st.plotly_chart(fig_timeline, width='stretch')
+            st.plotly_chart(fig_timeline, use_container_width=True)
             st.divider()
 
         # ── Story detail table ────────────────────────────────────────────
@@ -2023,7 +2041,7 @@ with tab_sprint:
                     legend=dict(orientation="h", yanchor="top", y=-0.08, xanchor="left", x=0),
                     margin=dict(t=50, b=60, l=0, r=20),
                 )
-                st.plotly_chart(fig_bar, width='stretch')
+                st.plotly_chart(fig_bar, use_container_width=True)
 
                 # ── Bottom row: scatter (accuracy) + variance bar ─────────
                 left, right = st.columns(2)
@@ -2064,7 +2082,7 @@ with tab_sprint:
                         xaxis=dict(range=[0, _max]),
                         yaxis=dict(range=[0, _max]),
                     )
-                    st.plotly_chart(fig_sc, width='stretch')
+                    st.plotly_chart(fig_sc, use_container_width=True)
 
                 with right:
                     mem_var = mem.copy()
@@ -2097,7 +2115,7 @@ with tab_sprint:
                         coloraxis_showscale=False,
                         margin=dict(t=40, b=20, l=0, r=20),
                     )
-                    st.plotly_chart(fig_var, width='stretch')
+                    st.plotly_chart(fig_var, use_container_width=True)
 
                 # ── Story detail expander ─────────────────────────────────
                 with st.expander("📋 Story Detail", expanded=False):
