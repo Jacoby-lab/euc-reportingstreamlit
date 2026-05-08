@@ -2211,39 +2211,41 @@ with tab_sprint:
                     _burndown_data = fetch_sprint_burndown(tuple(selected_sprint_ids), selected_group)
 
                 if _burndown_data:
-                    for _bd in _burndown_data:
-                        _bd_start = _bd["start"]
-                        _bd_end   = _bd["end"]
-                        _bd_est   = _bd["total_estimated"]
-                        _bd_daily = _bd["daily_logged"]
+                    # Combine all selected sprints into one chart
+                    _valid_bd = [b for b in _burndown_data if b["start"] and b["end"]]
+                    if not _valid_bd:
+                        st.caption("Insufficient sprint date data to render burndown.")
+                    else:
+                        _today_d  = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+                        _start_d  = min(date.fromisoformat(b["start"]) for b in _valid_bd)
+                        _end_d    = max(date.fromisoformat(b["end"])   for b in _valid_bd)
+                        _total_est = sum(b["total_estimated"] for b in _valid_bd)
+                        _combined_daily: dict = {}
+                        for b in _valid_bd:
+                            for d, h in b["daily_logged"].items():
+                                _combined_daily[d] = _combined_daily.get(d, 0) + h
 
-                        if not _bd_start or not _bd_end or _bd_est == 0:
-                            st.caption(f"Insufficient sprint date/estimate data for **{_bd['sprint_name']}**.")
-                            continue
-
-                        _start_d = date.fromisoformat(_bd_start)
-                        _end_d   = date.fromisoformat(_bd_end)
-                        _today_d = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
-                        _plot_end = min(_end_d, _today_d)
-
-                        # Build daily spine from sprint start → min(end, today)
-                        _all_days   = pd.date_range(_start_d, _plot_end).date
-                        _n_total    = (_end_d - _start_d).days or 1
-
-                        # Ideal line: linear from total_estimated → 0 over full sprint
-                        _ideal = [
-                            _bd_est * max((_end_d - d).days, 0) / _n_total
-                            for d in _all_days
+                        # Weekday-only spine for full sprint window
+                        _workdays = [
+                            d.date() for d in pd.date_range(_start_d, _end_d)
+                            if d.weekday() < 5
                         ]
+                        _n_wd = len(_workdays) or 1
 
-                        # Actual: cumulative logged → remaining = est - cumulative
+                        # Ideal: evenly spread total_est across all working days
+                        _daily_burn = _total_est / _n_wd
+                        _ideal = [max(_total_est - i * _daily_burn, 0) for i in range(_n_wd)]
+
+                        # Actual: cumulative logged on working days up to today; None for future
                         _cumulative = 0.0
                         _actual = []
-                        for d in _all_days:
-                            _cumulative += _bd_daily.get(d.strftime("%Y-%m-%d"), 0.0)
-                            _actual.append(max(_bd_est - _cumulative, 0))
+                        for d in _workdays:
+                            _cumulative += _combined_daily.get(d.strftime("%Y-%m-%d"), 0.0)
+                            _actual.append(max(_total_est - _cumulative, 0) if d <= _today_d else None)
 
-                        _day_strs = [d.strftime("%-m/%-d") for d in _all_days]
+                        _day_strs = [d.strftime("%-m/%-d") for d in _workdays]
+                        _sprint_title = " + ".join(b["sprint_name"] for b in _valid_bd)
+
                         _bd_df = pd.DataFrame({
                             "Day":    _day_strs,
                             "Ideal":  _ideal,
@@ -2255,7 +2257,7 @@ with tab_sprint:
                             markers=True,
                             color_discrete_map={"Ideal": "rgba(255,255,255,0.35)", "Actual": "#3b82f6"},
                             labels={"value": "Remaining Hours", "variable": ""},
-                            title=_bd["sprint_name"],
+                            title=_sprint_title,
                         )
                         fig_bd.update_traces(
                             selector=dict(name="Ideal"),
@@ -2266,9 +2268,10 @@ with tab_sprint:
                             selector=dict(name="Actual"),
                             line=dict(width=2.5),
                             marker=dict(size=6),
+                            connectgaps=False,
                         )
                         fig_bd.update_layout(
-                            height=320,
+                            height=360,
                             margin=dict(t=40, b=20, l=0, r=10),
                             xaxis=dict(showgrid=False, tickangle=-30),
                             yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
