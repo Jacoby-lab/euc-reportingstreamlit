@@ -507,15 +507,20 @@ def fetch_sprint_burndown(sprint_ids: tuple, group_name: str) -> list:
                 f"{base_url}/rest/agile/1.0/sprint/{sprint_id}/issue",
                 auth=auth, headers=headers,
                 params={"startAt": start, "maxResults": 100,
-                        "fields": "timeoriginalestimate,worklog,assignee"},
+                        "fields": "timeoriginalestimate,worklog,assignee,issuetype"},
                 timeout=30,
             )
             if not r.ok:
                 break
             data   = r.json()
             issues = data.get("issues", [])
+            _EXCLUDED_TYPES = {"epic", "sub-task", "subtask"}
             for issue in issues:
-                f        = issue["fields"]
+                f            = issue["fields"]
+                issue_type   = (f.get("issuetype") or {}).get("name", "").lower()
+                if issue_type in _EXCLUDED_TYPES:
+                    continue
+
                 assignee = (f.get("assignee") or {}).get("displayName", "")
                 if assignee in members or not members:
                     total_est += (f.get("timeoriginalestimate") or 0) / 3600
@@ -535,7 +540,7 @@ def fetch_sprint_burndown(sprint_ids: tuple, group_name: str) -> list:
                     if members and author not in members:
                         continue
                     log_date = (wl.get("started") or "")[:10]
-                    if not log_date:
+                    if not log_date or not (start_s <= log_date <= end_s):
                         continue
                     hrs = wl["timeSpentSeconds"] / 3600
                     daily_logged[log_date] = daily_logged.get(log_date, 0) + hrs
