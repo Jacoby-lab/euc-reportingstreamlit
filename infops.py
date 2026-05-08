@@ -409,8 +409,11 @@ def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
             data   = r.json()
             issues = data.get("issues", [])
 
+            _EXCLUDED_TYPES = {"epic", "sub-task", "subtask"}
             for issue in issues:
                 f         = issue["fields"]
+                if (f.get("issuetype") or {}).get("name", "").lower() in _EXCLUDED_TYPES:
+                    continue
                 ikey      = issue["key"]
                 assignee  = (f.get("assignee") or {}).get("displayName", "Unassigned")
                 est_h     = (f.get("timeoriginalestimate") or 0) / 3600
