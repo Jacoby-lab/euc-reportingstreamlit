@@ -2139,12 +2139,17 @@ with tab_sprint:
                     _pace_var           = _actual_remaining - _ideal_remaining  # + = behind, - = ahead
                     _bd_ready = True
 
-                # ── Summary metrics ───────────────────────────────────────
+                # ── Summary metrics (use burndown totals when available so all rows are consistent)
+                _disp_est = _total_est  if _bd_ready else tot_est
+                _disp_log = _cumulative if _bd_ready else tot_log
+                _disp_var = _disp_log - _disp_est
+                _disp_var_sign = "+" if _disp_var >= 0 else ""
+
                 c0, c1, c2, c3 = st.columns(4)
                 c0.metric("Sprint Stories", tot_stories)
-                c1.metric("Total Estimated", fh(tot_est))
-                c2.metric("Total Logged",    fh(tot_log))
-                c3.metric("Variance", f"{var_sign}{fh(tot_var)}")
+                c1.metric("Total Estimated", fh(_disp_est))
+                c2.metric("Total Logged",    fh(_disp_log))
+                c3.metric("Variance", f"{_disp_var_sign}{fh(_disp_var)}")
 
                 # ── Pace metrics ──────────────────────────────────────────
                 if _bd_ready and _n_elapsed > 0:
