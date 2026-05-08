@@ -2159,9 +2159,9 @@ with tab_sprint:
                     p0, p1, p2, p3 = st.columns(4)
                     p0.metric("Working Days Elapsed", f"{_n_elapsed} / {_n_wd}")
                     p1.metric("Ideal Remaining",  fh(_ideal_remaining))
-                    p2.metric("Actual Remaining", fh(_actual_remaining),
-                              delta=f"{'+' if _pace_var >= 0 else '-'}{fh(abs(_pace_var))} {'behind' if _pace_var > 0 else 'ahead'}",
-                              delta_color="inverse")
+                    p2.metric("Pace Variance",
+                              f"{fh(abs(_pace_var))} {'behind' if _pace_var > 0 else 'ahead'}",
+                              delta=None)
                     p3.metric("Daily Burn Needed",
                               fh((_actual_remaining / max(_n_wd - _n_elapsed, 1))),
                               help=f"Hours/day needed over remaining {_n_wd - _n_elapsed} working days to hit 0")
