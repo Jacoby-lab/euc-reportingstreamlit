@@ -468,6 +468,93 @@ def fetch_sprint_issues(sprint_ids: tuple, group_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_sprint_burndown(sprint_ids: tuple, group_name: str) -> list:
+    """
+    Returns list of dicts, one per sprint:
+      {sprint_name, start, end, total_estimated, daily_logged: {date_str: hours}}
+    Used to build per-sprint burndown charts.
+    """
+    try:
+        base_url = st.secrets["jira"]["base_url"].rstrip("/")
+        email    = st.secrets["jira"]["email"]
+        token    = st.secrets["jira"]["api_token"]
+    except KeyError:
+        return []
+    auth    = (email, token)
+    headers = {"Accept": "application/json"}
+    members = set(GROUPS[group_name].get("members", []))
+
+    results = []
+    for sprint_id in sprint_ids:
+        sr = requests.get(
+            f"{base_url}/rest/agile/1.0/sprint/{sprint_id}",
+            auth=auth, headers=headers, timeout=15,
+        )
+        if not sr.ok:
+            continue
+        smeta      = sr.json()
+        sprint_name = smeta.get("name", str(sprint_id))
+        start_s     = (smeta.get("startDate") or "")[:10]
+        end_s       = (smeta.get("endDate")   or "")[:10]
+
+        # Collect all issues in sprint
+        total_est   = 0.0
+        daily_logged: dict = {}
+        start = 0
+        while True:
+            r = requests.get(
+                f"{base_url}/rest/agile/1.0/sprint/{sprint_id}/issue",
+                auth=auth, headers=headers,
+                params={"startAt": start, "maxResults": 100,
+                        "fields": "timeoriginalestimate,worklog,assignee"},
+                timeout=30,
+            )
+            if not r.ok:
+                break
+            data   = r.json()
+            issues = data.get("issues", [])
+            for issue in issues:
+                f        = issue["fields"]
+                assignee = (f.get("assignee") or {}).get("displayName", "")
+                if assignee in members or not members:
+                    total_est += (f.get("timeoriginalestimate") or 0) / 3600
+
+                wl_data  = f.get("worklog", {})
+                worklogs = wl_data.get("worklogs", [])
+                if wl_data.get("total", 0) > len(worklogs):
+                    wr = requests.get(
+                        f"{base_url}/rest/api/3/issue/{issue['key']}/worklog",
+                        auth=auth, headers=headers, timeout=30,
+                    )
+                    if wr.ok:
+                        worklogs = wr.json().get("worklogs", [])
+
+                for wl in worklogs:
+                    author   = wl["author"]["displayName"]
+                    if members and author not in members:
+                        continue
+                    log_date = (wl.get("started") or "")[:10]
+                    if not log_date:
+                        continue
+                    hrs = wl["timeSpentSeconds"] / 3600
+                    daily_logged[log_date] = daily_logged.get(log_date, 0) + hrs
+
+            start += len(issues)
+            if start >= data.get("total", 0) or not issues:
+                break
+
+        results.append({
+            "sprint_name":   sprint_name,
+            "start":         start_s,
+            "end":           end_s,
+            "total_estimated": total_est,
+            "daily_logged":  daily_logged,
+        })
+
+    return results
+
+
 def _paginate_jql(base_url, auth, headers, jql, fields) -> list:
     """Generic paginator — returns all issues for a JQL query with given fields."""
     issues, npt = [], None
@@ -2116,6 +2203,81 @@ with tab_sprint:
                         margin=dict(t=40, b=20, l=0, r=20),
                     )
                     st.plotly_chart(fig_var, use_container_width=True)
+
+                # ── Burndown chart ────────────────────────────────────────
+                st.divider()
+                st.markdown("#### 🔥 Burndown — Estimated Remaining vs Time Spent")
+                with st.spinner("Loading burndown data…"):
+                    _burndown_data = fetch_sprint_burndown(tuple(selected_sprint_ids), selected_group)
+
+                if _burndown_data:
+                    for _bd in _burndown_data:
+                        _bd_start = _bd["start"]
+                        _bd_end   = _bd["end"]
+                        _bd_est   = _bd["total_estimated"]
+                        _bd_daily = _bd["daily_logged"]
+
+                        if not _bd_start or not _bd_end or _bd_est == 0:
+                            st.caption(f"Insufficient sprint date/estimate data for **{_bd['sprint_name']}**.")
+                            continue
+
+                        _start_d = date.fromisoformat(_bd_start)
+                        _end_d   = date.fromisoformat(_bd_end)
+                        _today_d = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+                        _plot_end = min(_end_d, _today_d)
+
+                        # Build daily spine from sprint start → min(end, today)
+                        _all_days   = pd.date_range(_start_d, _plot_end).date
+                        _n_total    = (_end_d - _start_d).days or 1
+
+                        # Ideal line: linear from total_estimated → 0 over full sprint
+                        _ideal = [
+                            _bd_est * max((_end_d - d).days, 0) / _n_total
+                            for d in _all_days
+                        ]
+
+                        # Actual: cumulative logged → remaining = est - cumulative
+                        _cumulative = 0.0
+                        _actual = []
+                        for d in _all_days:
+                            _cumulative += _bd_daily.get(d.strftime("%Y-%m-%d"), 0.0)
+                            _actual.append(max(_bd_est - _cumulative, 0))
+
+                        _day_strs = [d.strftime("%-m/%-d") for d in _all_days]
+                        _bd_df = pd.DataFrame({
+                            "Day":    _day_strs,
+                            "Ideal":  _ideal,
+                            "Actual": _actual,
+                        })
+
+                        fig_bd = px.line(
+                            _bd_df, x="Day", y=["Ideal", "Actual"],
+                            markers=True,
+                            color_discrete_map={"Ideal": "rgba(255,255,255,0.35)", "Actual": "#3b82f6"},
+                            labels={"value": "Remaining Hours", "variable": ""},
+                            title=_bd["sprint_name"],
+                        )
+                        fig_bd.update_traces(
+                            selector=dict(name="Ideal"),
+                            line=dict(dash="dash", width=1.5),
+                            marker=dict(size=0),
+                        )
+                        fig_bd.update_traces(
+                            selector=dict(name="Actual"),
+                            line=dict(width=2.5),
+                            marker=dict(size=6),
+                        )
+                        fig_bd.update_layout(
+                            height=320,
+                            margin=dict(t=40, b=20, l=0, r=10),
+                            xaxis=dict(showgrid=False, tickangle=-30),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                       title="Remaining Hours", rangemode="tozero"),
+                            legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                        )
+                        st.plotly_chart(fig_bd, use_container_width=True)
 
                 # ── Story detail expander ─────────────────────────────────
                 with st.expander("📋 Story Detail", expanded=False):
