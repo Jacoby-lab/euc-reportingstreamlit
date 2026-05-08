@@ -2102,7 +2102,6 @@ with tab_sprint:
                 st.divider()
 
                 # ── Burndown chart ────────────────────────────────────────
-                st.info("📣 Wes admitted that Kenneth was right.")
                 st.markdown("#### 🔥 Burndown — Estimated Remaining vs Time Spent")
                 with st.spinner("Loading burndown data…"):
                     _burndown_data = fetch_sprint_burndown(tuple(selected_sprint_ids), selected_group)
