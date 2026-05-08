@@ -2101,6 +2101,70 @@ with tab_sprint:
 
                 st.divider()
 
+                # ── Burndown chart ────────────────────────────────────────
+                st.markdown("#### 🔥 Burndown — Estimated Remaining vs Time Spent")
+                with st.spinner("Loading burndown data…"):
+                    _burndown_data = fetch_sprint_burndown(tuple(selected_sprint_ids), selected_group)
+
+                if _burndown_data:
+                    # Combine all selected sprints into one chart
+                    _valid_bd = [b for b in _burndown_data if b["start"] and b["end"]]
+                    if not _valid_bd:
+                        st.caption("Insufficient sprint date data to render burndown.")
+                    else:
+                        _today_d  = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
+                        _start_d  = min(date.fromisoformat(b["start"]) for b in _valid_bd)
+                        _end_d    = max(date.fromisoformat(b["end"])   for b in _valid_bd)
+                        _total_est = sum(b["total_estimated"] for b in _valid_bd)
+                        _combined_daily: dict = {}
+                        for b in _valid_bd:
+                            for d, h in b["daily_logged"].items():
+                                _combined_daily[d] = _combined_daily.get(d, 0) + h
+
+                        _workdays = [
+                            d.date() for d in pd.date_range(_start_d, _end_d)
+                            if d.weekday() < 5
+                        ]
+                        _n_wd = len(_workdays) or 1
+                        _daily_burn = _total_est / _n_wd
+                        _ideal = [max(_total_est - i * _daily_burn, 0) for i in range(_n_wd)]
+
+                        _cumulative = 0.0
+                        _actual = []
+                        for d in _workdays:
+                            _cumulative += _combined_daily.get(d.strftime("%Y-%m-%d"), 0.0)
+                            _actual.append(max(_total_est - _cumulative, 0) if d <= _today_d else None)
+
+                        _day_strs = [d.strftime("%-m/%-d") for d in _workdays]
+                        _sprint_title = " + ".join(b["sprint_name"] for b in _valid_bd)
+
+                        _bd_df = pd.DataFrame({"Day": _day_strs, "Ideal": _ideal, "Actual": _actual})
+
+                        fig_bd = px.line(
+                            _bd_df, x="Day", y=["Ideal", "Actual"],
+                            markers=True,
+                            color_discrete_map={"Ideal": "rgba(255,255,255,0.35)", "Actual": "#3b82f6"},
+                            labels={"value": "Remaining Hours", "variable": ""},
+                            title=_sprint_title,
+                        )
+                        fig_bd.update_traces(selector=dict(name="Ideal"),
+                            line=dict(dash="dash", width=1.5), marker=dict(size=0))
+                        fig_bd.update_traces(selector=dict(name="Actual"),
+                            line=dict(width=2.5), marker=dict(size=6), connectgaps=False)
+                        fig_bd.update_layout(
+                            height=360,
+                            margin=dict(t=40, b=20, l=0, r=10),
+                            xaxis=dict(showgrid=False, tickangle=-30),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+                                       title="Remaining Hours", rangemode="tozero"),
+                            legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                        )
+                        st.plotly_chart(fig_bd, use_container_width=True)
+
+                st.divider()
+
                 # ── Grouped horizontal bar: estimated vs logged ───────────
                 bar_melt = mem[["member", "estimated", "logged"]].melt(
                     id_vars="member", var_name="Type", value_name="Hours"
@@ -2203,84 +2267,6 @@ with tab_sprint:
                         margin=dict(t=40, b=20, l=0, r=20),
                     )
                     st.plotly_chart(fig_var, use_container_width=True)
-
-                # ── Burndown chart ────────────────────────────────────────
-                st.divider()
-                st.markdown("#### 🔥 Burndown — Estimated Remaining vs Time Spent")
-                with st.spinner("Loading burndown data…"):
-                    _burndown_data = fetch_sprint_burndown(tuple(selected_sprint_ids), selected_group)
-
-                if _burndown_data:
-                    # Combine all selected sprints into one chart
-                    _valid_bd = [b for b in _burndown_data if b["start"] and b["end"]]
-                    if not _valid_bd:
-                        st.caption("Insufficient sprint date data to render burndown.")
-                    else:
-                        _today_d  = (datetime.now(timezone.utc) + timedelta(hours=LOCAL_UTC_OFFSET)).date()
-                        _start_d  = min(date.fromisoformat(b["start"]) for b in _valid_bd)
-                        _end_d    = max(date.fromisoformat(b["end"])   for b in _valid_bd)
-                        _total_est = sum(b["total_estimated"] for b in _valid_bd)
-                        _combined_daily: dict = {}
-                        for b in _valid_bd:
-                            for d, h in b["daily_logged"].items():
-                                _combined_daily[d] = _combined_daily.get(d, 0) + h
-
-                        # Weekday-only spine for full sprint window
-                        _workdays = [
-                            d.date() for d in pd.date_range(_start_d, _end_d)
-                            if d.weekday() < 5
-                        ]
-                        _n_wd = len(_workdays) or 1
-
-                        # Ideal: evenly spread total_est across all working days
-                        _daily_burn = _total_est / _n_wd
-                        _ideal = [max(_total_est - i * _daily_burn, 0) for i in range(_n_wd)]
-
-                        # Actual: cumulative logged on working days up to today; None for future
-                        _cumulative = 0.0
-                        _actual = []
-                        for d in _workdays:
-                            _cumulative += _combined_daily.get(d.strftime("%Y-%m-%d"), 0.0)
-                            _actual.append(max(_total_est - _cumulative, 0) if d <= _today_d else None)
-
-                        _day_strs = [d.strftime("%-m/%-d") for d in _workdays]
-                        _sprint_title = " + ".join(b["sprint_name"] for b in _valid_bd)
-
-                        _bd_df = pd.DataFrame({
-                            "Day":    _day_strs,
-                            "Ideal":  _ideal,
-                            "Actual": _actual,
-                        })
-
-                        fig_bd = px.line(
-                            _bd_df, x="Day", y=["Ideal", "Actual"],
-                            markers=True,
-                            color_discrete_map={"Ideal": "rgba(255,255,255,0.35)", "Actual": "#3b82f6"},
-                            labels={"value": "Remaining Hours", "variable": ""},
-                            title=_sprint_title,
-                        )
-                        fig_bd.update_traces(
-                            selector=dict(name="Ideal"),
-                            line=dict(dash="dash", width=1.5),
-                            marker=dict(size=0),
-                        )
-                        fig_bd.update_traces(
-                            selector=dict(name="Actual"),
-                            line=dict(width=2.5),
-                            marker=dict(size=6),
-                            connectgaps=False,
-                        )
-                        fig_bd.update_layout(
-                            height=360,
-                            margin=dict(t=40, b=20, l=0, r=10),
-                            xaxis=dict(showgrid=False, tickangle=-30),
-                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)",
-                                       title="Remaining Hours", rangemode="tozero"),
-                            legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                        )
-                        st.plotly_chart(fig_bd, use_container_width=True)
 
                 # ── Story detail expander ─────────────────────────────────
                 with st.expander("📋 Story Detail", expanded=False):
