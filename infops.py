@@ -2146,13 +2146,13 @@ with tab_sprint:
                 _disp_est = _total_est  if _bd_ready else tot_est
                 _disp_log = _cumulative if _bd_ready else tot_log
                 _disp_var = _disp_log - _disp_est
-                _disp_var_sign = "+" if _disp_var >= 0 else ""
+                _disp_var_sign = "+" if _disp_var > 0 else "-" if _disp_var < 0 else ""
 
                 c0, c1, c2, c3 = st.columns(4)
                 c0.metric("Sprint Stories", tot_stories)
                 c1.metric("Total Estimated", fh(_disp_est))
                 c2.metric("Total Logged",    fh(_disp_log))
-                c3.metric("Variance", f"{_disp_var_sign}{fh(_disp_var)}")
+                c3.metric("Variance", f"{_disp_var_sign}{fh(abs(_disp_var))}")
 
                 # ── Pace metrics ──────────────────────────────────────────
                 if _bd_ready and _n_elapsed > 0:
@@ -2160,7 +2160,7 @@ with tab_sprint:
                     p0.metric("Working Days Elapsed", f"{_n_elapsed} / {_n_wd}")
                     p1.metric("Ideal Remaining",  fh(_ideal_remaining))
                     p2.metric("Actual Remaining", fh(_actual_remaining),
-                              delta=f"{'+' if _pace_var >= 0 else ''}{fh(_pace_var)} {'behind' if _pace_var > 0 else 'ahead'}",
+                              delta=f"{'+' if _pace_var >= 0 else '-'}{fh(abs(_pace_var))} {'behind' if _pace_var > 0 else 'ahead'}",
                               delta_color="inverse")
                     p3.metric("Daily Burn Needed",
                               fh((_actual_remaining / max(_n_wd - _n_elapsed, 1))),
