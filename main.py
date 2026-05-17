@@ -581,14 +581,14 @@ with tab_dash:
         st.markdown("##### US Team — Time by Category")
         st.plotly_chart(
             make_normalized_bar(us_df, ""),
-            width='stretch',
+            use_container_width=True,
         )
 
     with col_mx:
         st.markdown("##### MX Team — Time by Category")
         st.plotly_chart(
             make_normalized_bar(mx_df, ""),
-            width='stretch',
+            use_container_width=True,
         )
 
     st.divider()
@@ -634,7 +634,7 @@ with tab_dash:
         margin=dict(t=10, b=0, l=0, r=0),
         paper_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig_tree, width='stretch')
+    st.plotly_chart(fig_tree, use_container_width=True)
 
     # ── Footer note ──────────────────────────────────────────────────────
     _zero_members = [r["Name"] for _, r in df.iterrows() if r["Total"] == 0] if not df.empty else []
@@ -705,7 +705,7 @@ with tab1:
                 height=380,
                 margin=dict(t=40, b=0, l=0, r=0),
             )
-            st.plotly_chart(fig_pie, width='stretch')
+            st.plotly_chart(fig_pie, use_container_width=True)
 
         with right:
             sort_order = fdf.sort_values("Total", ascending=False)["Name"].tolist()
@@ -736,7 +736,7 @@ with tab1:
                 margin=dict(t=40, b=80, l=0, r=0),
             )
             st.markdown("**Hours by Person — Stacked by Category**")
-            st.plotly_chart(fig_stack, width='stretch')
+            st.plotly_chart(fig_stack, use_container_width=True)
 
 
 
@@ -785,7 +785,7 @@ with tab2:
                 hovertemplate="<b>%{label}</b><br>%{customdata[0]} (%{customdata[1]:.1f}%)<extra></extra>",
             )
             fig_p.update_layout(showlegend=False, height=360)
-            st.plotly_chart(fig_p, width='stretch')
+            st.plotly_chart(fig_p, use_container_width=True)
 
         with p2:
             cat_sorted = cat_df.sort_values("Hours")
@@ -808,7 +808,7 @@ with tab2:
                 xaxis_title="Hours (decimal)",
                 margin=dict(t=20, r=80),
             )
-            st.plotly_chart(fig_b, width='stretch')
+            st.plotly_chart(fig_b, use_container_width=True)
 
     else:
         # ── Multi-person view ──
@@ -842,7 +842,7 @@ with tab2:
             xaxis_title="Hours (decimal)",
         )
         st.markdown("**Hours by Individual — Stacked by Category**")
-        st.plotly_chart(fig_ind, width='stretch')
+        st.plotly_chart(fig_ind, use_container_width=True)
 
         st.divider()
         st.markdown("#### Member Cards")
@@ -934,7 +934,7 @@ with tab3:
                 margin=dict(t=40, r=130, b=20, l=0),
             )
             st.markdown(f"**{CAT_LABELS[selected_cat]} — Hours by Person**")
-            st.plotly_chart(fig_cat, width='stretch')
+            st.plotly_chart(fig_cat, use_container_width=True)
 
         with cr:
             if len(region_filter) > 1:
@@ -957,7 +957,7 @@ with tab3:
                     height=260,
                     margin=dict(t=40, b=0, l=0, r=0),
                 )
-                st.plotly_chart(fig_r, width='stretch')
+                st.plotly_chart(fig_r, use_container_width=True)
 
             st.markdown("**Top contributors**")
             for _, r in cat_tab.head(5).iterrows():
@@ -990,7 +990,7 @@ with tab4:
 
     st.dataframe(
         display_df,
-        width='stretch',
+        use_container_width=True,
         hide_index=True,
         height=min(700, 80 + len(display_df) * 37),
     )
@@ -1004,7 +1004,7 @@ with tab4:
                 totals[col] = fh(fdf[col].sum())
         st.dataframe(
             pd.DataFrame([totals])[show_cols],
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
         )
 
